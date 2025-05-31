@@ -102,6 +102,10 @@ RT_ANICURSOR = 21
 RT_ANIICON = 22
 RT_HTML = 23
 RT_MANIFEST = 24
+# Windows User Experience Guidelines section 2.1.3.3
+# https://learn.microsoft.com/en-us/windows/win32/menurc/resource-types
+RT_DLGINIT = 240
+RT_TOOLBAR = 241
 
 # Language ID constants (simplified, full list is extensive)
 # MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL) -> 0x00

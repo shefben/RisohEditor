@@ -42,7 +42,7 @@ class App(customtkinter.CTk):
 
         self.resources: list[Resource] = []
         self.current_filepath: str | None = None
-        self.current_file_type: str | None = None
+        self.current_file_type: str | None = None # Will be ".rc", ".res", or "PE"
         # self.mcpp_path: str = "mcpp.exe" # Old
         # self.windres_path: str = "windres.exe" # Old
         self.include_paths: list[str] = []
@@ -200,11 +200,14 @@ class App(customtkinter.CTk):
         self.current_filepath = filepath
         if self.treeview: self.treeview.delete(*self.treeview.get_children())
         self.resources = []; self.tree_item_to_resource.clear(); self.set_app_dirty(False); self._clear_editor_frame(); self.current_selected_resource_item_id = None
-        _, ext = os.path.splitext(filepath); self.current_file_type = ext.lower()
+
+        _, ext_with_dot = os.path.splitext(filepath)
+        ext = ext_with_dot.lower()
 
         try:
             self.title(f"Python Resource Editor - {os.path.basename(filepath)}")
-            if self.current_file_type == ".rc":
+            if ext == ".rc":
+                self.current_file_type = ".rc" # Explicitly set
                 rc_dir = os.path.dirname(filepath); current_includes = (self.include_paths or []) + [rc_dir]
                 parser = RCParser(mcpp_path=self.mcpp_path, include_paths=current_includes)
                 parsed_rc_resources = parser.parse_rc_file(filepath)
@@ -217,7 +220,8 @@ class App(customtkinter.CTk):
                         elif res.resource_type_name == "ACCELERATORS": self.resources.append(AcceleratorResource.parse_from_text_block(res))
                         else: self.resources.append(res)
                     else: self.resources.append(res)
-            elif self.current_file_type == ".res":
+            elif ext == ".res":
+                self.current_file_type = ".res" # Explicitly set
                 binary_resources = parse_res_file(filepath)
                 for res in binary_resources:
                     if res.identifier.type_id == RT_STRING: self.resources.append(StringTableResource.parse_from_binary_data(res.data, res.identifier))
@@ -226,7 +230,8 @@ class App(customtkinter.CTk):
                     elif res.identifier.type_id == RT_VERSION: self.resources.append(VersionInfoResource.parse_from_binary_data(res.data, res.identifier))
                     elif res.identifier.type_id == RT_ACCELERATOR: self.resources.append(AcceleratorResource.parse_from_binary_data(res.data, res.identifier))
                     else: self.resources.append(res)
-            elif self.current_file_type in [".exe", ".dll", ".ocx", ".sys", ".scr", ".cpl", ".ime", ".mui"]:
+            elif ext in [".exe", ".dll", ".ocx", ".sys", ".scr", ".cpl", ".ime", ".mui"]:
+                self.current_file_type = "PE" # Use generic "PE" type
                 pe_resources = extract_resources_from_pe(filepath)
                 for res in pe_resources:
                     if res.identifier.type_id == RT_STRING: self.resources.append(StringTableResource.parse_from_binary_data(res.data, res.identifier))
@@ -236,15 +241,15 @@ class App(customtkinter.CTk):
                     elif res.identifier.type_id == RT_ACCELERATOR: self.resources.append(AcceleratorResource.parse_from_binary_data(res.data, res.identifier))
                     else: self.resources.append(res)
             else:
-                self.show_error_message("Unsupported File Type", f"The file type '{self.current_file_type}' is not supported.")
+                self.current_file_type = None # Unknown
+                self.show_error_message("Unsupported File Type", f"The file type '{ext}' is not currently supported for opening.")
                 self.title("Python Resource Editor - Error"); return
 
             self.populate_treeview()
             if self.filemenu_reference:
-                 # Enable Save for PE files as well now
-                 self.filemenu_reference.entryconfig("Save", state="normal" if self.current_file_type in ['.rc', '.res', '.exe', '.dll', '.ocx', '.sys', '.scr'] else "disabled")
-                 self.filemenu_reference.entryconfig("Save As...", state="normal")
-                 self.filemenu_reference.entryconfig("Import Resource from File...", state="normal") # Enable after a context is open
+                 self.filemenu_reference.entryconfig("Save", state="normal" if self.current_file_type in ['.rc', '.res', 'PE'] else "disabled")
+                 self.filemenu_reference.entryconfig("Save As...", state="normal") # Save As is always possible if resources are loaded
+                 self.filemenu_reference.entryconfig("Import Resource from File...", state="normal")
             self.show_status(f"Opened: {os.path.basename(self.current_filepath)} ({len(self.resources)} resources found)", 5000)
             if self.editmenu_reference:
                  self.editmenu_reference.entryconfig("Add Resource...", state="normal")
@@ -785,7 +790,7 @@ class App(customtkinter.CTk):
             self.save_as_rc_file(self.current_filepath)
         elif self.current_file_type == ".res":
             self.save_as_res_file(self.current_filepath)
-        elif self.current_file_type in [".exe", ".dll", ".ocx", ".sys", ".scr"]:
+        elif self.current_file_type == "PE": # Check against generic "PE" type
             if self.save_pe_file(self.current_filepath):
                  self.show_info_message("Save Successful", f"PE File '{os.path.basename(self.current_filepath)}' updated successfully.")
                  self.show_status(f"Saved PE: {os.path.basename(self.current_filepath)}", 5000)
@@ -795,8 +800,11 @@ class App(customtkinter.CTk):
 
 
     def save_pe_file(self, filepath: str) -> bool:
-        from ..utils.winapi_ctypes import kernel32, BeginUpdateResourcesW, UpdateResourceW, EndUpdateResourcesW, MAKEINTRESOURCE, INVALID_HANDLE_VALUE
+        # Ensure imports are at the top of the file for clarity, but this is functional.
+        from ..utils.winapi_ctypes import BeginUpdateResourcesW, UpdateResourceW, EndUpdateResourcesW, MAKEINTRESOURCE
+        import ctypes # For get_last_error and wintypes
         import shutil
+        import os
 
         backup_path = filepath + ".pyre.bak"
         try:
@@ -808,13 +816,17 @@ class App(customtkinter.CTk):
             self.show_status(f"Backup Error for '{os.path.basename(filepath)}': {e}", 7000, is_error=True)
             return False
 
-        hUpdate = BeginUpdateResourcesW(filepath, True)
+        # Note: BeginUpdateResourcesW's first argument is LPCWSTR.
+        # ctypes handles string conversion for LPCWSTR.
+        hUpdate = BeginUpdateResourcesW(filepath, True) # True = delete existing resources
 
-        if not hUpdate or hUpdate == INVALID_HANDLE_VALUE:
+        # A NULL handle from ctypes for wintypes.HANDLE is often represented as None or an int 0.
+        # Let's check against None, as that's common for failed HANDLE returns via ctypes.
+        if hUpdate is None:
             err = ctypes.get_last_error()
             try:
                 if os.path.exists(backup_path): os.remove(backup_path)
-            except OSError: pass
+            except OSError: pass # Ignore error if backup removal fails
             self.show_error_message("PE Update Error", f"BeginUpdateResourcesW failed (Error {err}). Cannot update PE file.")
             self.show_status(f"BeginUpdateResourcesW failed (Error {err}) on {os.path.basename(filepath)}", 7000, is_error=True)
             return False
@@ -825,8 +837,20 @@ class App(customtkinter.CTk):
         for res_obj in self.resources:
             res_type_val = res_obj.identifier.type_id
             res_name_val = res_obj.identifier.name_id
-            lpType = MAKEINTRESOURCE(res_type_val) if isinstance(res_type_val, int) else ctypes.wintypes.LPWSTR(str(res_type_val))
-            lpName = MAKEINTRESOURCE(res_name_val) if isinstance(res_name_val, int) else ctypes.wintypes.LPWSTR(str(res_name_val))
+
+            # Prepare lpType and lpName
+            if isinstance(res_type_val, int): lpType = MAKEINTRESOURCE(res_type_val)
+            elif isinstance(res_type_val, str): lpType = ctypes.wintypes.LPWSTR(res_type_val)
+            else: # Should not happen with valid ResourceIdentifier
+                print(f"Warning: Invalid resource type for {res_obj.identifier}. Skipping.")
+                skipped_resource_count +=1; continue
+
+            if isinstance(res_name_val, int): lpName = MAKEINTRESOURCE(res_name_val)
+            elif isinstance(res_name_val, str): lpName = ctypes.wintypes.LPWSTR(res_name_val)
+            else: # Should not happen
+                print(f"Warning: Invalid resource name for {res_obj.identifier}. Skipping.")
+                skipped_resource_count +=1; continue
+
             wLang = res_obj.identifier.language_id
 
             try: binary_data = res_obj.to_binary_data()
@@ -841,6 +865,12 @@ class App(customtkinter.CTk):
                 print(f"Warning: No binary data for resource {res_obj.identifier}. Skipping update for this resource.")
                 skipped_resource_count +=1; continue
 
+            # Create a buffer from the bytes data that UpdateResourceW can use.
+            # ctypes.c_char_p(binary_data) might be problematic if data contains null bytes prematurely.
+            # Using a buffer ensures the whole data is passed.
+            # However, UpdateResourceW expects LPVOID which can be a pointer to any data.
+            # Python's `bytes` type when passed to a c_void_p (LPVOID) argtype in ctypes
+            # is generally handled correctly as a pointer to its buffer.
             lpData = binary_data
             cbData = len(binary_data)
 
@@ -852,8 +882,9 @@ class App(customtkinter.CTk):
                 success_all = False; break
             updated_resource_count +=1
 
-        if success_all and updated_resource_count > 0: # Check if any resources were actually processed
-            if not EndUpdateResourcesW(hUpdate, False):
+        if success_all and (updated_resource_count > 0 or (len(self.resources) == 0 and skipped_resource_count == 0) ):
+            # If successful and we updated something, OR if we successfully deleted all resources (0 resources, 0 skipped)
+            if not EndUpdateResourcesW(hUpdate, False): # False = Write changes
                 err = ctypes.get_last_error()
                 self.show_error_message("PE Update Error", f"EndUpdateResourcesW (commit) failed (Error {err}). Restoring from backup.")
                 self.show_status(f"EndUpdateResourcesW (commit) failed (Error {err}) for {os.path.basename(filepath)}", 7000, is_error=True)
@@ -863,28 +894,14 @@ class App(customtkinter.CTk):
                 except Exception as e_restore:
                     self.show_error_message("Restore Error", f"Failed to restore from backup '{backup_path}': {e_restore}")
                 return False
-            else:
+            else: # Successfully committed
                 try:
                     if os.path.exists(backup_path): os.remove(backup_path)
                 except OSError: pass
                 self.set_app_dirty(False)
-                # self.show_info_message below handles combined success message
                 return True
-        elif success_all and updated_resource_count == 0 and skipped_resource_count == 0 and len(self.resources) == 0: # Saving empty to PE
-            # This means BeginUpdate(delete=True) was called, and then EndUpdate(commit=False)
-            # This effectively clears resources from the PE.
-            if not EndUpdateResourcesW(hUpdate, False): # Commit the deletion of all resources
-                err = ctypes.get_last_error(); self.show_error_message("PE Update Error", f"EndUpdateResourcesW (commit empty) failed (Error {err}). Restoring."); self.show_status(f"Commit empty failed (Error {err})", 7000, is_error=True)
-                try: shutil.move(backup_path, filepath)
-                except: pass
-                return False
-            else:
-                if os.path.exists(backup_path): os.remove(backup_path)
-                self.set_app_dirty(False)
-                # self.show_info_message("PE Update", f"All resources cleared from '{os.path.basename(filepath)}'.")
-                return True
-        else: # Loop broke (success_all=False) or all resources skipped but there were resources
-            EndUpdateResourcesW(hUpdate, True)
+        else: # Loop broke (success_all=False) or all resources were skipped but there were some to begin with
+            EndUpdateResourcesW(hUpdate, True) # True = Discard changes
             restore_msg_suffix = ""
             try:
                 if os.path.exists(backup_path): shutil.move(backup_path, filepath)
@@ -893,8 +910,11 @@ class App(customtkinter.CTk):
                 restore_msg_suffix = f" Restore from backup also failed: {e_restore}"
 
             final_msg = f"Resource updates failed for {os.path.basename(filepath)}. Changes discarded.{restore_msg_suffix}"
-            # No need for info_message here, error already shown by UpdateResourceW failure
-            self.show_status(final_msg, 7000, is_error=True)
+            if updated_resource_count == 0 and skipped_resource_count > 0 and len(self.resources) > 0 :
+                 # This means no UpdateResourceW calls succeeded or were even attempted if all skipped.
+                 self.show_info_message("PE Update Information", final_msg) # Use info if no update call actually failed.
+            # If success_all is False, an error message was already shown by UpdateResourceW failure.
+            self.show_status(final_msg, 7000, is_error=not success_all) # is_error if an update failed.
             return False
 
     def on_about(self):
