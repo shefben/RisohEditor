@@ -50,10 +50,16 @@ MFS_DEFAULT = 0x00001000
 # MFS_ENABLED = 0x00000000 (default state, item is enabled)
 
 # MENUEX Header constants
-MENUEX_TEMPLATE_VERSION = 1 # wVersion in MENUEX_TEMPLATE_HEADER
-MENUEX_HEADER_OFFSET = 4     # wOffset in MENUEX_TEMPLATE_HEADER (offset to first MENUEX_TEMPLATE_ITEM from start of header)
+# MENUEX_TEMPLATE_VERSION = 1 # wVersion in MENUEX_TEMPLATE_HEADER (Already defined in resource_types.py where it's used for header parsing)
+# MENUEX_HEADER_OFFSET = 4     # wOffset in MENUEX_TEMPLATE_HEADER (Already defined in resource_types.py)
+MENUEX_TEMPLATE_SIGNATURE_VERSION = 1 # More descriptive name for the version in MENUEX header
+MENUEX_HEADER_OFFSET_TO_ITEMS = 4 # More descriptive name for the offset
 
 FLAG_TO_STR_MAP = {
+    MF_STRING: "STRING", # Usually implicit for MENUITEM, but can be explicit MFT_STRING
+    MF_SEPARATOR: "SEPARATOR",
+    MF_POPUP: "POPUP",
+    MF_OWNERDRAW: "OWNERDRAW",
     MF_GRAYED: "GRAYED",
     MF_DISABLED: "INACTIVE",
     MF_CHECKED: "CHECKED",

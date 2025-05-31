@@ -16,8 +16,8 @@ from ..core.rc_parser import RCParser
 from ..core.res_parser import parse_res_file
 from ..core.resource_base import Resource, ResourceIdentifier, FileResource, TextBlockResource
 from ..core.resource_types import StringTableResource, RCDataResource, MenuResource, DialogResource, VersionInfoResource, AcceleratorResource
-from ..utils.external_tools import run_windres_compile, WindresError
-from ..utils import image_utils # Import image_utils
+from ..utils.external_tools import run_windres_compile, WindresError, get_tool_path # Import get_tool_path
+from ..utils import image_utils
 from ..core.resource_base import (
     RT_CURSOR, RT_BITMAP, RT_ICON, RT_MENU, RT_DIALOG, RT_STRING, RT_FONTDIR,
     RT_FONT, RT_ACCELERATOR, RT_RCDATA, RT_MESSAGETABLE, RT_GROUP_CURSOR,
@@ -43,8 +43,8 @@ class App(customtkinter.CTk):
         self.resources: list[Resource] = []
         self.current_filepath: str | None = None
         self.current_file_type: str | None = None
-        self.mcpp_path: str = "mcpp.exe"
-        self.windres_path: str = "windres.exe"
+        # self.mcpp_path: str = "mcpp.exe" # Old
+        # self.windres_path: str = "windres.exe" # Old
         self.include_paths: list[str] = []
         self.treeview: ttk.Treeview | None = None
         self.tree_item_to_resource = {}
@@ -53,6 +53,18 @@ class App(customtkinter.CTk):
         self.current_editor_widget: customtkinter.CTkBaseClass | None = None
         self.current_selected_resource_item_id: str | None = None
         self.save_text_changes_button: customtkinter.CTkButton | None = None
+
+        # Resolve tool paths
+        self.mcpp_path: str = get_tool_path("mcpp.exe")
+        self.windres_path: str = get_tool_path("windres.exe")
+
+        if not os.path.exists(self.mcpp_path) or not os.access(self.mcpp_path, os.X_OK):
+            print(f"FATAL: mcpp.exe not found or not executable at '{self.mcpp_path}'. RC file operations will fail.")
+            # Optionally, disable RC functionality or show error dialog here.
+            # For now, a print warning. The actual MCPPError will be raised on use.
+        if not os.path.exists(self.windres_path) or not os.access(self.windres_path, os.X_OK):
+            print(f"FATAL: windres.exe not found or not executable at '{self.windres_path}'. Saving to .RES will fail.")
+            # Optionally, disable RES saving. WindresError will be raised on use.
 
         self.filemenu_reference: tkinter.Menu | None = None
         self.editmenu_reference: tkinter.Menu | None = None
@@ -222,7 +234,8 @@ class App(customtkinter.CTk):
 
             self.populate_treeview()
             if self.filemenu_reference:
-                 self.filemenu_reference.entryconfig("Save", state="normal" if self.current_file_type in ['.rc', '.res'] else "disabled")
+                 # Enable Save for PE files as well now
+                 self.filemenu_reference.entryconfig("Save", state="normal" if self.current_file_type in ['.rc', '.res', '.exe', '.dll', '.ocx', '.sys', '.scr'] else "disabled")
                  self.filemenu_reference.entryconfig("Save As...", state="normal")
                  self.filemenu_reference.entryconfig("Import Resource from File...", state="normal") # Enable after a context is open
             if self.editmenu_reference:
@@ -680,23 +693,154 @@ class App(customtkinter.CTk):
     def on_save_as_file(self):
         # ... (same as before) ...
         if not self.resources and not tkmessagebox.askyesno("Save Empty File?", "No resources. Create empty file?", parent=self): return
-        filepath = tkfiledialog.asksaveasfilename(title="Save As", defaultextension=".rc", filetypes=(("RC Script", "*.rc"), ("RES File", "*.res"),("All", "*.*")))
+
+        pe_file_types = [("PE Files", "*.exe *.dll *.ocx *.sys *.scr"), ("All files", "*.*")]
+        script_file_types = [("RC Script", "*.rc"), ("RES File", "*.res")]
+        all_save_types = script_file_types + pe_file_types
+
+        filepath = tkfiledialog.asksaveasfilename(title="Save As", defaultextension=".rc", filetypes=all_save_types)
         if not filepath: return
         _, ext = os.path.splitext(filepath); ext = ext.lower()
+
         if ext == ".rc": self.save_as_rc_file(filepath)
         elif ext == ".res": self.save_as_res_file(filepath)
-        else: self.show_error_message("Save As Error", f"Unsupported type: {ext}. Choose .rc or .res.")
+        elif ext in [".exe", ".dll", ".ocx", ".sys", ".scr"]:
+            # Check if current_filepath is the same to determine if it's a "Save" or "Save As" for PE.
+            # For PE, "Save As" implies copying the original PE and then updating resources in the copy.
+            # "Save" updates the currently opened PE file (with backup).
+            if self.current_filepath and os.path.normpath(self.current_filepath) == os.path.normpath(filepath):
+                # This is a "Save" operation on an already opened PE file
+                if self.save_pe_file(filepath):
+                    self.show_info_message("Save Successful", f"PE File '{os.path.basename(filepath)}' updated successfully.")
+                # save_pe_file already shows error messages
+            else:
+                # This is a "Save As" operation for a PE file.
+                # We need to copy the original PE file (if one is open) or a template PE to the new location,
+                # then update resources in that copy. This is more complex than a direct save.
+                # For now, let's restrict direct save to only the currently open PE file.
+                if self.current_file_type in [".exe", ".dll", ".ocx", ".sys", ".scr"] and self.current_filepath:
+                    try:
+                        shutil.copy2(self.current_filepath, filepath)
+                        self.current_filepath = filepath # Update current path to the new copy
+                        self.current_file_type = ext
+                        if self.save_pe_file(filepath): # Update the new copy
+                             self.show_info_message("Save As Successful", f"PE File saved as '{os.path.basename(filepath)}' and updated.")
+                        # save_pe_file shows errors if update fails
+                    except Exception as e:
+                        self.show_error_message("Save As PE Error", f"Failed to copy file to '{filepath}': {e}")
+                else:
+                    self.show_error_message("Save As PE Error", "To save as a new PE file, please open an existing PE file first to use as a template, modify resources, then 'Save As'. Direct creation of PE from scratch is not supported.")
+        else: self.show_error_message("Save As Error", f"Unsupported file type: {ext}. Choose .rc, .res, .exe, or .dll.")
 
     def on_save_file(self):
-        # ... (same as before) ...
-        if not self.current_filepath or self.current_file_type not in [".rc", ".res"]: self.on_save_as_file(); return
-        if not self.resources and self.current_filepath:
-            if tkmessagebox.askyesno("Save Empty?", "No resources. Save empty file? (No = Save As)", parent=self): pass
-            else: self.on_save_as_file(); return
-        if self.current_file_type == ".rc": self.save_as_rc_file(self.current_filepath)
-        elif self.current_file_type == ".res": self.save_as_res_file(self.current_filepath)
-        else: self.show_error_message("Save Error", "Cannot save this type. Use 'Save As...' for .rc or .res.")
+        if not self.current_filepath:
+            self.on_save_as_file()
+            return
 
+        if not self.resources and self.current_filepath:
+            if not tkmessagebox.askyesno("Save Empty?", "No resources. Save empty file? (This might corrupt PE files or create empty RC/RES)", parent=self):
+                # self.on_save_as_file() # Optionally offer Save As if they don't want to save empty
+                return
+
+        if self.current_file_type == ".rc":
+            self.save_as_rc_file(self.current_filepath) # save_as_rc_file handles setting dirty flag
+        elif self.current_file_type == ".res":
+            self.save_as_res_file(self.current_filepath) # save_as_res_file handles setting dirty flag
+        elif self.current_file_type in [".exe", ".dll", ".ocx", ".sys", ".scr"]:
+            if self.save_pe_file(self.current_filepath):
+                 self.show_info_message("Save Successful", f"PE File '{os.path.basename(self.current_filepath)}' updated successfully.")
+            # save_pe_file handles its own error messages and dirty flag on success
+        else:
+            # Fallback to Save As if current type is unknown or not directly saveable
+            self.on_save_as_file()
+
+
+    def save_pe_file(self, filepath: str) -> bool:
+        from ..utils.winapi_ctypes import kernel32, BeginUpdateResourcesW, UpdateResourceW, EndUpdateResourcesW, MAKEINTRESOURCE, INVALID_HANDLE_VALUE
+        import shutil # For backup
+
+        backup_path = filepath + ".pyre.bak"
+        try:
+            if os.path.exists(backup_path): os.remove(backup_path) # Remove old backup first
+            shutil.copy2(filepath, backup_path)
+        except Exception as e:
+            self.show_error_message("Backup Error", f"Failed to create backup for '{filepath}': {e}")
+            return False
+
+        hUpdate = BeginUpdateResourcesW(filepath, True) # True = delete existing resources
+
+        if not hUpdate or hUpdate == INVALID_HANDLE_VALUE: # Check for NULL or specific invalid handle
+            err = ctypes.get_last_error()
+            try: os.remove(backup_path) # Clean up backup if BeginUpdate failed
+            except OSError: pass
+            self.show_error_message("PE Update Error", f"BeginUpdateResourcesW failed (Error {err}). Cannot update PE file.")
+            return False
+
+        success_all = True
+        updated_resource_count = 0
+        skipped_resource_count = 0
+
+        for res_obj in self.resources:
+            res_type_val = res_obj.identifier.type_id
+            res_name_val = res_obj.identifier.name_id
+
+            lpType = MAKEINTRESOURCE(res_type_val) if isinstance(res_type_val, int) else ctypes.wintypes.LPWSTR(str(res_type_val))
+            lpName = MAKEINTRESOURCE(res_name_val) if isinstance(res_name_val, int) else ctypes.wintypes.LPWSTR(str(res_name_val))
+            wLang = res_obj.identifier.language_id
+
+            try:
+                binary_data = res_obj.to_binary_data()
+            except Exception as e_data: # Catch errors from to_binary_data itself
+                print(f"Error getting binary data for {res_obj.identifier}: {e_data}")
+                self.show_error_message("Data Conversion Error", f"Failed to get binary data for resource {res_obj.identifier.type_id_to_str()}/{res_obj.identifier.name_id_to_str()}: {e_data}")
+                skipped_resource_count +=1
+                continue # Skip this resource
+
+            if binary_data is None:
+                print(f"Warning: No binary data for resource {res_obj.identifier}. Skipping update for this resource.")
+                skipped_resource_count +=1
+                continue
+
+            # Ensure lpData is a pointer to the data. ctypes.c_char_p is for null-terminated strings.
+            # For arbitrary binary data, use ctypes.create_string_buffer or pass data directly if API allows (UpdateResourceW needs LPVOID).
+            # Python bytes are immutable sequences of single bytes. Passing them directly to LPVOID should work
+            # as ctypes will handle it as a pointer to the first byte if the argtype is LPVOID/c_void_p.
+            lpData = binary_data
+            cbData = len(binary_data)
+
+            if not UpdateResourceW(hUpdate, lpType, lpName, wLang, lpData, cbData):
+                err = ctypes.get_last_error()
+                self.show_error_message("PE Update Error", f"UpdateResourceW failed for {res_obj.identifier.type_id_to_str()}/{res_obj.identifier.name_id_to_str()} (Error {err}).")
+                success_all = False
+                break
+            updated_resource_count +=1
+
+        if success_all:
+            if not EndUpdateResourcesW(hUpdate, False): # False = Write changes
+                err = ctypes.get_last_error()
+                self.show_error_message("PE Update Error", f"EndUpdateResourcesW (commit) failed (Error {err}). Restoring from backup.")
+                try:
+                    if os.path.exists(backup_path): shutil.move(backup_path, filepath)
+                    else: print("Error: Backup file missing, cannot restore.")
+                except Exception as e_restore:
+                    self.show_error_message("Restore Error", f"Failed to restore from backup '{backup_path}': {e_restore}")
+                return False
+            else: # Successfully committed
+                try:
+                    if os.path.exists(backup_path): os.remove(backup_path)
+                except OSError: pass
+                self.set_app_dirty(False) # Changes are saved
+                # self.show_info_message("PE Update Successful", f"{updated_resource_count} resources updated in '{os.path.basename(filepath)}'. {skipped_resource_count} skipped.")
+                return True
+        else: # Loop broke due to an UpdateResourceW failure or all skipped
+            EndUpdateResourcesW(hUpdate, True) # True = Discard changes
+            self.show_info_message("PE Update Failed", f"Resource updates failed. Restoring '{os.path.basename(filepath)}' from backup. {skipped_resource_count} resources were skipped, {updated_resource_count} attempted before failure.")
+            try:
+                if os.path.exists(backup_path): shutil.move(backup_path, filepath)
+                else: print("Error: Backup file missing, cannot restore on failure.")
+            except Exception as e_restore:
+                self.show_error_message("Restore Error", f"Failed to restore from backup '{backup_path}' on failure: {e_restore}")
+            return False
 
     def on_about(self):
         # ... (same as before) ...

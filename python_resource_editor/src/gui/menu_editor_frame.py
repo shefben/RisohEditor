@@ -141,71 +141,99 @@ class MenuEditorFrame(customtkinter.CTkFrame):
 
         item = self.selected_menu_entry
 
-        # --- Populate Properties Pane ---
-        # Item Type (usually not editable directly, rather delete and add new type)
-        customtkinter.CTkLabel(self.props_frame, text=f"Type: {item.item_type}").pack(anchor="w", padx=5)
+        # --- Populate Properties Pane using .grid ---
+        self.props_frame.grid_columnconfigure(0, weight=0) # Labels
+        self.props_frame.grid_columnconfigure(1, weight=1) # Inputs
+        current_row = 0
+
+        # Item Type
+        customtkinter.CTkLabel(self.props_frame, text="Type:").grid(row=current_row, column=0, sticky="w", padx=5, pady=2)
+        customtkinter.CTkLabel(self.props_frame, text=item.item_type_str).grid(row=current_row, column=1, sticky="w", padx=5, pady=2)
+        current_row += 1
 
         # Caption/Text
-        customtkinter.CTkLabel(self.props_frame, text="Caption:").pack(anchor="w", padx=5)
+        customtkinter.CTkLabel(self.props_frame, text="Caption:").grid(row=current_row, column=0, sticky="w", padx=5, pady=2)
         caption_entry = customtkinter.CTkEntry(self.props_frame)
         caption_entry.insert(0, item.text)
-        caption_entry.pack(fill="x", padx=5, pady=(0,5))
+        caption_entry.grid(row=current_row, column=1, sticky="ew", padx=5, pady=(0,5))
         self.prop_widgets['text'] = caption_entry
+        current_row += 1
 
-        if item.item_type != "SEPARATOR":
+        if item.item_type_str != "SEPARATOR":
             # ID/Name
-            customtkinter.CTkLabel(self.props_frame, text="ID/Symbolic Name:").pack(anchor="w", padx=5)
+            customtkinter.CTkLabel(self.props_frame, text="ID/Symbolic Name:").grid(row=current_row, column=0, sticky="w", padx=5, pady=2)
             id_entry = customtkinter.CTkEntry(self.props_frame)
-            id_entry.insert(0, item.get_id_display())
-            id_entry.pack(fill="x", padx=5, pady=(0,5))
+            id_entry.insert(0, item.get_id_display()) # get_id_display handles name_val or id_val
+            id_entry.grid(row=current_row, column=1, sticky="ew", padx=5, pady=(0,5))
             self.prop_widgets['id'] = id_entry
+            current_row += 1
 
         # Flags (Checkboxes) - for MENUITEM and POPUP
-        if item.item_type != "SEPARATOR":
-            customtkinter.CTkLabel(self.props_frame, text="Flags:").pack(anchor="w", padx=5)
+        if item.item_type_str != "SEPARATOR":
+            customtkinter.CTkLabel(self.props_frame, text="Flags:").grid(row=current_row, column=0, sticky="nw", padx=5, pady=2)
             flags_frame = customtkinter.CTkFrame(self.props_frame, fg_color="transparent")
-            flags_frame.pack(fill="x", padx=5, pady=(0,5))
+            flags_frame.grid(row=current_row, column=1, sticky="ew", padx=5, pady=(0,5))
+            flags_frame.grid_columnconfigure((0,1), weight=1) # Allow checkboxes to spread
+            current_row += 1
 
-            # Common flags, can be extended
-            possible_flags = ["GRAYED", "INACTIVE", "CHECKED", "HELP", "MENUBARBREAK", "MENUBREAK"]
-            self.prop_widgets['flags'] = {}
-            for i, flag_name in enumerate(possible_flags):
+            # Use item.get_flags_display_list() to determine checkbox states
+            current_item_flags_as_strings = item.get_flags_display_list()
+
+            # Define which flags are relevant for checkboxes
+            # This list can be expanded or made context-aware (std vs ex)
+            # For now, common ones. Note: POPUP/SEPARATOR are item types, not flags here.
+            # STRING is usually implicit.
+            checkbox_flags = ["GRAYED", "INACTIVE", "CHECKED", "HELP", "MENUBARBREAK", "MENUBREAK", "OWNERDRAW", "RADIO", "DEFAULT", "HILITE", "BITMAP"]
+            self.prop_widgets['flags'] = {} # Store checkbox widgets
+            cb_row, cb_col = 0, 0
+            for flag_name in checkbox_flags:
+                # Only show relevant flags, e.g., MENUEX specific flags for MENUEX items
+                if not item.is_ex and flag_name in ["DEFAULT", "HILITE", "RADIO", "BITMAP"]: # MFS/MFT specific
+                    continue
+                if item.is_ex and flag_name in ["HELP"]: # HELP is not a typical MFS/MFT flag string
+                     continue
+
                 cb = customtkinter.CTkCheckBox(flags_frame, text=flag_name)
-                if flag_name in item.flags:
+                if flag_name in current_item_flags_as_strings:
                     cb.select()
-                cb.grid(row=i//2, column=i%2, sticky="w", padx=2, pady=2)
+                cb.grid(row=cb_row, column=cb_col, sticky="w", padx=2, pady=2)
                 self.prop_widgets['flags'][flag_name] = cb
+                cb_col += 1
+                if cb_col > 1: cb_col = 0; cb_row +=1
 
-            # For MENUEX specific fields
+        # For MENUEX specific fields (numeric display/edit)
         if item.is_ex:
-                customtkinter.CTkLabel(self.props_frame, text="Type Numeric (MFT_):").pack(anchor="w", padx=5)
-                type_num_entry = customtkinter.CTkEntry(self.props_frame)
-                type_num_entry.insert(0, f"0x{item.type_numeric:08X}")
-                type_num_entry.pack(fill="x", padx=5, pady=(0,5))
-                self.prop_widgets['type_numeric'] = type_num_entry # For hex input
+            customtkinter.CTkLabel(self.props_frame, text="Type Numeric (MFT_):").grid(row=current_row, column=0, sticky="w", padx=5, pady=2)
+            type_num_entry = customtkinter.CTkEntry(self.props_frame)
+            type_num_entry.insert(0, f"0x{item.type_numeric:08X}") # Display from item's direct field
+            type_num_entry.grid(row=current_row, column=1, sticky="ew", padx=5, pady=(0,5))
+            self.prop_widgets['type_numeric_hex'] = type_num_entry # Changed key for clarity
+            current_row += 1
 
-                customtkinter.CTkLabel(self.props_frame, text="State Numeric (MFS_):").pack(anchor="w", padx=5)
-                state_num_entry = customtkinter.CTkEntry(self.props_frame)
-                state_num_entry.insert(0, f"0x{item.state_numeric:08X}")
-                state_num_entry.pack(fill="x", padx=5, pady=(0,5))
-                self.prop_widgets['state_numeric'] = state_num_entry # For hex input
+            customtkinter.CTkLabel(self.props_frame, text="State Numeric (MFS_):").grid(row=current_row, column=0, sticky="w", padx=5, pady=2)
+            state_num_entry = customtkinter.CTkEntry(self.props_frame)
+            state_num_entry.insert(0, f"0x{item.state_numeric:08X}") # Display from item's direct field
+            state_num_entry.grid(row=current_row, column=1, sticky="ew", padx=5, pady=(0,5))
+            self.prop_widgets['state_numeric_hex'] = state_num_entry # Changed key for clarity
+            current_row += 1
 
-                customtkinter.CTkLabel(self.props_frame, text="Help ID:").pack(anchor="w", padx=5)
+            customtkinter.CTkLabel(self.props_frame, text="Help ID:").grid(row=current_row, column=0, sticky="w", padx=5, pady=2)
             help_id_entry = customtkinter.CTkEntry(self.props_frame)
-                help_id_entry.insert(0, str(item.help_id or 0)) # Default to 0 if None
-            help_id_entry.pack(fill="x", padx=5, pady=(0,5))
+            help_id_entry.insert(0, str(item.help_id or 0))
+            help_id_entry.grid(row=current_row, column=1, sticky="ew", padx=5, pady=(0,5))
             self.prop_widgets['help_id'] = help_id_entry
-            else: # Standard Menu, show combined flags_numeric
-                customtkinter.CTkLabel(self.props_frame, text="Flags Numeric (MF_):").pack(anchor="w", padx=5)
-                flags_num_entry = customtkinter.CTkEntry(self.props_frame)
-                flags_num_entry.insert(0, f"0x{item.flags_numeric:04X}")
-                flags_num_entry.pack(fill="x", padx=5, pady=(0,5))
-                self.prop_widgets['flags_numeric'] = flags_num_entry
-
+            current_row += 1
+        elif item.item_type_str != "SEPARATOR": # Standard Menu, show combined flags_numeric
+            customtkinter.CTkLabel(self.props_frame, text="Flags Numeric (MF_):").grid(row=current_row, column=0, sticky="w", padx=5, pady=2)
+            flags_num_entry = customtkinter.CTkEntry(self.props_frame)
+            flags_num_entry.insert(0, f"0x{item.flags_numeric:04X}") # Display from item's direct field
+            flags_num_entry.grid(row=current_row, column=1, sticky="ew", padx=5, pady=(0,5))
+            self.prop_widgets['flags_numeric_hex'] = flags_num_entry # Changed key for clarity
+            current_row += 1
 
         apply_props_button = customtkinter.CTkButton(self.props_frame, text="Apply Item Changes", command=self.apply_item_changes)
-        apply_props_button.pack(pady=10)
-
+        apply_props_button.grid(row=current_row, column=0, columnspan=2, pady=10)
+        current_row +=1
 
     def _get_selected_parent_and_target_list(self) -> Tuple[Optional[List[MenuItemEntry]], Optional[MenuItemEntry]]:
         """Gets the parent list for adding new items, or the list containing the selected item."""
@@ -282,7 +310,7 @@ class MenuEditorFrame(customtkinter.CTkFrame):
         item = self.selected_menu_entry
         item.text = self.prop_widgets['text'].get()
 
-        if item.item_type != "SEPARATOR":
+        if item.item_type_str != "SEPARATOR": # Use item_type_str
             id_str = self.prop_widgets['id'].get().strip()
             if id_str.isdigit() or (id_str.startswith("0x")):
                 try: item.id_val = int(id_str,0); item.name_val = None
@@ -290,35 +318,35 @@ class MenuEditorFrame(customtkinter.CTkFrame):
             else:
                 item.id_val = id_str; item.name_val = id_str
 
-        # Update flags based on checkboxes
-        new_str_flags = []
-        numeric_flags_from_checkboxes = 0
-        for flag_name_key, cb_widget in self.prop_widgets['flags_ checkboxes'].items():
-            if cb_widget.get() == 1:
-                new_str_flags.append(flag_name_key)
-                # Find the numeric value for this flag string (this needs the reverse map or iterating FLAG_TO_STR_MAP)
-                for num_val, str_val in FLAG_TO_STR_MAP.items(): # This is inefficient, better to have STR_TO_FLAG_MAP
-                    if str_val == flag_name_key:
-                        numeric_flags_from_checkboxes |= num_val
-                        break
-        item.flags = new_str_flags
+        # Update item.flags_list based on checkboxes
+        # This will be the source of truth for string flags.
+        item.flags_list.clear()
+        if 'flags' in self.prop_widgets: # Check if flags frame was populated
+            for flag_name_key, cb_widget in self.prop_widgets['flags'].items():
+                if cb_widget.get() == 1:
+                    item.flags_list.append(flag_name_key)
 
+        # Update numeric fields from hex entries
+        # Then, call a method on MenuItemEntry to reconcile numeric fields from its flags_list.
         if item.is_ex:
             try:
-                item.type_numeric = int(self.prop_widgets['type_numeric_hex'].get(), 0)
-                item.state_numeric = int(self.prop_widgets['state_numeric_hex'].get(), 0)
-                help_id_str = self.prop_widgets['help_id'].get().strip()
-                item.help_id = int(help_id_str) if help_id_str else 0 # Default to 0 if empty
+                # User might edit these directly, these take precedence if filled
+                if 'type_numeric_hex' in self.prop_widgets: # Check presence before accessing
+                    item.type_numeric = int(self.prop_widgets['type_numeric_hex'].get(), 0)
+                if 'state_numeric_hex' in self.prop_widgets:
+                    item.state_numeric = int(self.prop_widgets['state_numeric_hex'].get(), 0)
+                if 'help_id' in self.prop_widgets:
+                    help_id_str = self.prop_widgets['help_id'].get().strip()
+                    item.help_id = int(help_id_str) if help_id_str.isdigit() else (item.help_id or 0)
             except ValueError:
-                messagebox.showerror("Error", "Numeric Type/State/Help ID must be valid hex/decimal numbers.", parent=self)
+                messagebox.showerror("Error", "MENUEX Numeric Type/State/Help ID must be valid hex/decimal numbers.", parent=self)
                 return
-            # Update item.flags from MFT_ and MFS_ numeric fields if needed, or ensure consistency
-            # This might be complex if text flags are also directly edited. For now, numeric fields are primary for binary.
-        else: # Standard menu
+        elif item.item_type_str != "SEPARATOR": # Standard menu
             try:
-                item.flags_numeric = int(self.prop_widgets['flags_numeric_hex'].get(), 0)
+                if 'flags_numeric_hex' in self.prop_widgets: # Check presence
+                    item.flags_numeric = int(self.prop_widgets['flags_numeric_hex'].get(), 0)
             except ValueError:
-                messagebox.showerror("Error", "Flags Numeric must be a valid hex/decimal number.", parent=self)
+                messagebox.showerror("Error", "Standard Flags Numeric must be a valid hex/decimal number.", parent=self)
                 return
 
         self.populate_menu_tree()

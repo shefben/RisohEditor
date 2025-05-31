@@ -468,26 +468,27 @@ class MenuResource(Resource):
             current_items = []
             while s.tell() < len(raw_data):
                 if s.tell() + 2 > len(raw_data): break
-                flags_numeric = struct.unpack('<H', s.read(2))[0]
-                entry = MenuItemEntry(type_numeric=flags_numeric, is_ex=False)
-                if flags_numeric & MF_POPUP: entry.item_type = "POPUP"
-                elif flags_numeric & MF_SEPARATOR: entry.item_type = "SEPARATOR"
-                else: entry.item_type = "MENUITEM"
+                item_flags_value = struct.unpack('<H', s.read(2))[0]
 
-                # Populate entry.flags for standard menus
-                for flag_val, flag_name in FLAG_TO_STR_MAP.items():
-                    if (flags_numeric & flag_val):
-                        # MF_HELP is often part of POPUP/MENUITEM definition, not a 'state' like others
-                        if flag_name == "HELP" and not (entry.item_type == "POPUP" or entry.item_type == "MENUITEM"):
-                             if not (flags_numeric & MF_HELP): continue # Only add HELP if explicitly set
-                        if flag_name not in entry.flags: entry.flags.append(flag_name)
+                item_type_str = "MENUITEM"
+                if item_flags_value & MF_POPUP: item_type_str = "POPUP"
+                elif item_flags_value & MF_SEPARATOR: item_type_str = "SEPARATOR"
 
-                if not (flags_numeric & MF_POPUP) and entry.item_type != "SEPARATOR":
-                    if s.tell() + 2 > len(raw_data): break
+                # For standard menus, flags_numeric holds all MF_ flags including type and state.
+                entry = MenuItemEntry(item_type_str=item_type_str,
+                                      flags_numeric=item_flags_value,
+                                      is_ex=False)
+
+                # entry.flags_list is not populated here; get_flags_display_list() will derive from numeric.
+
+                if not (item_flags_value & MF_POPUP) and item_type_str != "SEPARATOR":
+                    if s.tell() + 2 > len(raw_data): break # Not enough for ID
                     entry.id_val = struct.unpack('<H', s.read(2))[0]
+
                 entry.text = _read_str_utf16_null_terminated(s)
-                if flags_numeric & MF_POPUP:
-                    entry.children, _ = _parse_standard_items_binary_recursive(s, True) # Discard the MF_END signal for now
+
+                if item_flags_value & MF_POPUP:
+                    entry.children, _ = _parse_standard_items_binary_recursive(s, True)
                 current_items.append(entry)
                 if flags_numeric & MF_END and is_submenu: return current_items, True # Found MF_END for this submenu
                 if s.tell() >= len(raw_data) and not (flags_numeric & MF_END and is_submenu) and not is_submenu: break
@@ -503,32 +504,27 @@ class MenuResource(Resource):
                 # Check if we are at the end of the stream before reading item header
                 if s.tell() + 12 > len(raw_data): break # Not enough data for a full MENUEX item header
 
-                dwType, dwState, ulId, bResInfo = struct.unpack('<LLLH', s.read(12))
-                entry = MenuItemEntry(type_numeric=dwType, state_numeric=dwState, id_val=ulId, is_ex=True, bResInfo_word=bResInfo)
+                dwType, dwState, ulId, bResInfo_val = struct.unpack('<LLLH', s.read(12))
 
-                # Determine item type
-                if dwType & MF_POPUP: entry.item_type = "POPUP"
-                elif dwType & MFT_SEPARATOR: entry.item_type = "SEPARATOR"
-                else: entry.item_type = "MENUITEM"
+                item_type_str_ex = "MENUITEM"
+                if dwType & MF_POPUP: item_type_str_ex = "POPUP"
+                elif dwType & MFT_SEPARATOR: item_type_str_ex = "SEPARATOR"
 
-                # Populate entry.flags for MENUEX items
-                # MFT_ flags from dwType
-                for flag_val, flag_name in FLAG_TO_STR_MAP.items():
-                    if flag_val in [MF_MENUBARBREAK, MF_MENUBREAK, MF_OWNERDRAW, MFT_RADIOCHECK, MFT_BITMAP, MFT_STRING]: # MFT types
-                        if dwType & flag_val and flag_name not in entry.flags: entry.flags.append(flag_name)
-                # MFS_ flags from dwState
-                for flag_val, flag_name in FLAG_TO_STR_MAP.items():
-                     if flag_val in [MFS_GRAYED, MFS_DISABLED, MFS_CHECKED, MFS_DEFAULT, MFS_HILITE]: # MFS states
-                        if dwState & flag_val:
-                            if flag_name == "INACTIVE" and (dwState & MFS_GRAYED) == MFS_GRAYED: continue # Avoid redundant INACTIVE if GRAYED
-                            if flag_name not in entry.flags: entry.flags.append(flag_name)
+                item_text_ex = _read_unicode_string_align_dword(s)
+                item_help_id = 0
+                if not (dwType & MF_POPUP) and not (dwType & MFT_SEPARATOR):
+                    if s.tell() + 4 > len(raw_data): break
+                    item_help_id = struct.unpack('<L', s.read(4))[0]
 
-                entry.text = _read_unicode_string_align_dword(s)
-
-                if not (dwType & MF_POPUP) and not (dwType & MFT_SEPARATOR): # Not a POPUP or SEPARATOR
-                    # Help ID is only present if it's not a separator and not a popup
-                    if s.tell() + 4 > len(raw_data): break # Not enough data for help_id
-                    entry.help_id = struct.unpack('<L', s.read(4))[0]
+                entry = MenuItemEntry(item_type_str=item_type_str_ex,
+                                      text=item_text_ex,
+                                      id_val=ulId,
+                                      is_ex=True,
+                                      type_numeric=dwType,
+                                      state_numeric=dwState,
+                                      help_id=item_help_id,
+                                      bResInfo_word=bResInfo_val)
+                # entry.flags_list is not populated here; get_flags_display_list() will derive.
 
                 current_items.append(entry)
 

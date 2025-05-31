@@ -1,57 +1,103 @@
 # src/utils/external_tools.py
 import subprocess
 import os
+import sys # For sys.frozen and sys._MEIPASS
+import shutil # For shutil.which
 from typing import List, Optional
 
 class MCPPError(Exception):
     """Custom exception for mcpp execution errors."""
     pass
 
+def get_tool_path(tool_filename: str) -> str:
+    """
+    Determines the path to an external tool (mcpp.exe, windres.exe).
+    Checks PyInstaller bundle, then development paths, then system PATH.
+    Returns the resolved path or the original tool_filename if not found (caller must check existence).
+    """
+    # Check if running in a PyInstaller bundle
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        bundle_dir = sys._MEIPASS
+
+        # Path 1: Tool directly in MEIPASS (e.g., datas=[('path/to/tool.exe', '.')])
+        tool_path_root = os.path.join(bundle_dir, tool_filename)
+        if os.path.exists(tool_path_root):
+            return tool_path_root
+
+        # Path 2: Tool in 'data/bin' subdir of MEIPASS (e.g., datas=[('path/to/tool.exe', 'data/bin')])
+        # This matches the build.spec structure.
+        tool_path_databin = os.path.join(bundle_dir, "data", "bin", tool_filename)
+        if os.path.exists(tool_path_databin):
+            return tool_path_databin
+
+        # Path 3: Tool in 'bin' subdir of MEIPASS (e.g., datas=[('path/to/tool.exe', 'bin')])
+        tool_path_bin = os.path.join(bundle_dir, "bin", tool_filename)
+        if os.path.exists(tool_path_bin):
+            return tool_path_bin
+
+    # Development mode paths
+    try:
+        this_file_dir = os.path.dirname(os.path.abspath(__file__)) # Absolute path to this file's directory
+        # project_root is expected to be two levels up from src/utils (python_resource_editor directory)
+        project_root_from_utils = os.path.abspath(os.path.join(this_file_dir, "..", ".."))
+
+        # Path A: project_root/data/bin/tool_filename (primary dev structure)
+        dev_path_a = os.path.join(project_root_from_utils, "data", "bin", tool_filename)
+        if os.path.exists(dev_path_a):
+            return dev_path_a
+
+        # Path B: If CWD is the project_root (e.g., running `python -m src` from `python_resource_editor`)
+        # This is common for development.
+        cwd_dev_path = os.path.join(os.getcwd(), "data", "bin", tool_filename)
+        if os.path.exists(cwd_dev_path) and os.path.samefile(os.getcwd(), project_root_from_utils): # Ensure CWD is actually project root
+            return cwd_dev_path
+
+    except Exception:
+        # __file__ might not be defined in some contexts, or path ops might fail
+        pass
+
+    # Fallback to system PATH
+    tool_on_path = shutil.which(tool_filename)
+    if tool_on_path:
+        return tool_on_path
+
+    # If not found anywhere, return the original filename.
+    # The App class (caller) will check os.path.exists and show a fatal error.
+    return tool_filename
+
+
 def run_mcpp(
     rc_filepath: str,
-    mcpp_path: str,
+    mcpp_path: str, # Expected to be a resolved path
     include_paths: Optional[List[str]] = None,
     extra_args: Optional[List[str]] = None
 ) -> str:
     """
     Runs the mcpp.exe preprocessor on an RC file.
-
     Args:
         rc_filepath: Path to the .rc file.
-        mcpp_path: Path to mcpp.exe.
+        mcpp_path: Resolved path to mcpp.exe.
         include_paths: List of include directories for mcpp.
         extra_args: List of additional arguments for mcpp.exe.
-
     Returns:
         The preprocessed RC content as a string.
-
     Raises:
-        MCPPError: If mcpp.exe is not found, or if it returns an error.
+        MCPPError: If mcpp.exe execution fails or returns an error.
         FileNotFoundError: If rc_filepath does not exist.
     """
     if not os.path.exists(rc_filepath):
         raise FileNotFoundError(f"RC file not found: {rc_filepath}")
 
-    # Simplified path finding for mcpp - rely on provided path or PATH
-    if not os.path.exists(mcpp_path) and not any(os.access(os.path.join(path, mcpp_path), os.X_OK) for path in os.environ["PATH"].split(os.pathsep)):
-        # Try a common relative path as a last resort if not in PATH and not absolute
-        script_dir = os.path.dirname(__file__) # .../src/utils
-        project_root_guess = os.path.abspath(os.path.join(script_dir, "..", "..")) # .../
-        common_relative_path = os.path.join(project_root_guess, "data", "bin", "mcpp.exe")
-        if os.path.exists(common_relative_path):
-            mcpp_path = common_relative_path
-        else:
-            common_relative_path_alt = os.path.join(project_root_guess, "..", "data", "bin", "mcpp.exe") # if project_root is one level deeper
-            if os.path.exists(common_relative_path_alt):
-                 mcpp_path = common_relative_path_alt
-            else:
-                raise MCPPError(f"mcpp.exe not found at '{mcpp_path}', common relative paths, or in system PATH.")
+    # mcpp_path is now expected to be resolved by the caller (App class using get_tool_path)
+    # A basic check here can still be useful, but App should ensure it's valid.
+    if not os.path.exists(mcpp_path) or not os.access(mcpp_path, os.X_OK):
+         raise MCPPError(f"mcpp.exe not found or not executable at the provided path: '{mcpp_path}'. Ensure it's resolved correctly before calling.")
 
     command = [mcpp_path]
 
     # Common arguments for RC preprocessing.
     # -P: Inhibit line # directives in output.
-    # -C: Keep comments. (May or may not be desirable depending on parsing strategy)
+    # -C: Keep comments. (Not used by default as it complicates parsing)
     # -DRC_INVOKED: Define RC_INVOKED, common for resource compilation.
     # -D_WIN32: Common define.
     # -e <encoding>: Specify default encoding of input files. (mcpp might guess, or use system default)
@@ -137,18 +183,9 @@ def run_windres_compile(
     if not os.path.exists(rc_filepath):
         raise FileNotFoundError(f"Input RC file not found: {rc_filepath}")
 
-    if not os.path.exists(windres_path) and not any(os.access(os.path.join(path, windres_path), os.X_OK) for path in os.environ["PATH"].split(os.pathsep)):
-        script_dir = os.path.dirname(__file__)
-        project_root_guess = os.path.abspath(os.path.join(script_dir, "..", ".."))
-        common_relative_path = os.path.join(project_root_guess, "data", "bin", "windres.exe")
-        if os.path.exists(common_relative_path):
-            windres_path = common_relative_path
-        else:
-            common_relative_path_alt = os.path.join(project_root_guess, "..", "data", "bin", "windres.exe")
-            if os.path.exists(common_relative_path_alt):
-                 windres_path = common_relative_path_alt
-            else:
-                raise WindresError(f"windres.exe not found at '{windres_path}', common relative paths, or in system PATH.")
+    # windres_path is now expected to be resolved by the caller (App class using get_tool_path)
+    if not os.path.exists(windres_path) or not os.access(windres_path, os.X_OK):
+        raise WindresError(f"windres.exe not found or not executable at the provided path: '{windres_path}'. Ensure it's resolved correctly.")
 
     command = [
         windres_path,
