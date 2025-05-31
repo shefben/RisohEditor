@@ -176,17 +176,33 @@ class MenuEditorFrame(customtkinter.CTkFrame):
                 cb.grid(row=i//2, column=i%2, sticky="w", padx=2, pady=2)
                 self.prop_widgets['flags'][flag_name] = cb
 
-        # For MENUEX specific fields (state, help_id) - simplified for now
+            # For MENUEX specific fields
         if item.is_ex:
-            # Help ID (MENUEX only for items)
-            customtkinter.CTkLabel(self.props_frame, text="Help ID (MENUEX):").pack(anchor="w", padx=5)
+                customtkinter.CTkLabel(self.props_frame, text="Type Numeric (MFT_):").pack(anchor="w", padx=5)
+                type_num_entry = customtkinter.CTkEntry(self.props_frame)
+                type_num_entry.insert(0, f"0x{item.type_numeric:08X}")
+                type_num_entry.pack(fill="x", padx=5, pady=(0,5))
+                self.prop_widgets['type_numeric'] = type_num_entry # For hex input
+
+                customtkinter.CTkLabel(self.props_frame, text="State Numeric (MFS_):").pack(anchor="w", padx=5)
+                state_num_entry = customtkinter.CTkEntry(self.props_frame)
+                state_num_entry.insert(0, f"0x{item.state_numeric:08X}")
+                state_num_entry.pack(fill="x", padx=5, pady=(0,5))
+                self.prop_widgets['state_numeric'] = state_num_entry # For hex input
+
+                customtkinter.CTkLabel(self.props_frame, text="Help ID:").pack(anchor="w", padx=5)
             help_id_entry = customtkinter.CTkEntry(self.props_frame)
-            help_id_entry.insert(0, str(item.help_id) if item.help_id is not None else "")
+                help_id_entry.insert(0, str(item.help_id or 0)) # Default to 0 if None
             help_id_entry.pack(fill="x", padx=5, pady=(0,5))
             self.prop_widgets['help_id'] = help_id_entry
+            else: # Standard Menu, show combined flags_numeric
+                customtkinter.CTkLabel(self.props_frame, text="Flags Numeric (MF_):").pack(anchor="w", padx=5)
+                flags_num_entry = customtkinter.CTkEntry(self.props_frame)
+                flags_num_entry.insert(0, f"0x{item.flags_numeric:04X}")
+                flags_num_entry.pack(fill="x", padx=5, pady=(0,5))
+                self.prop_widgets['flags_numeric'] = flags_num_entry
 
 
-        # Apply Item Changes Button for properties
         apply_props_button = customtkinter.CTkButton(self.props_frame, text="Apply Item Changes", command=self.apply_item_changes)
         apply_props_button.pack(pady=10)
 
@@ -270,25 +286,48 @@ class MenuEditorFrame(customtkinter.CTkFrame):
             id_str = self.prop_widgets['id'].get().strip()
             if id_str.isdigit() or (id_str.startswith("0x")):
                 try: item.id_val = int(id_str,0); item.name_val = None
-                except ValueError: item.id_val = id_str; item.name_val = id_str # Fallback
-            else: # Symbolic
+                except ValueError: item.id_val = id_str; item.name_val = id_str
+            else:
                 item.id_val = id_str; item.name_val = id_str
 
-            item.flags = [name for name, cb_var in self.prop_widgets['flags'].items() if cb_var.get() == 1]
+        # Update flags based on checkboxes
+        new_str_flags = []
+        numeric_flags_from_checkboxes = 0
+        for flag_name_key, cb_widget in self.prop_widgets['flags_ checkboxes'].items():
+            if cb_widget.get() == 1:
+                new_str_flags.append(flag_name_key)
+                # Find the numeric value for this flag string (this needs the reverse map or iterating FLAG_TO_STR_MAP)
+                for num_val, str_val in FLAG_TO_STR_MAP.items(): # This is inefficient, better to have STR_TO_FLAG_MAP
+                    if str_val == flag_name_key:
+                        numeric_flags_from_checkboxes |= num_val
+                        break
+        item.flags = new_str_flags
 
-            if item.is_ex and 'help_id' in self.prop_widgets:
+        if item.is_ex:
+            try:
+                item.type_numeric = int(self.prop_widgets['type_numeric_hex'].get(), 0)
+                item.state_numeric = int(self.prop_widgets['state_numeric_hex'].get(), 0)
                 help_id_str = self.prop_widgets['help_id'].get().strip()
-                try: item.help_id = int(help_id_str) if help_id_str else None
-                except ValueError: messagebox.showerror("Error", "Help ID must be numeric.", parent=self); return
+                item.help_id = int(help_id_str) if help_id_str else 0 # Default to 0 if empty
+            except ValueError:
+                messagebox.showerror("Error", "Numeric Type/State/Help ID must be valid hex/decimal numbers.", parent=self)
+                return
+            # Update item.flags from MFT_ and MFS_ numeric fields if needed, or ensure consistency
+            # This might be complex if text flags are also directly edited. For now, numeric fields are primary for binary.
+        else: # Standard menu
+            try:
+                item.flags_numeric = int(self.prop_widgets['flags_numeric_hex'].get(), 0)
+            except ValueError:
+                messagebox.showerror("Error", "Flags Numeric must be a valid hex/decimal number.", parent=self)
+                return
 
-        self.populate_menu_tree() # Refresh tree to show changes
-        # Re-select the item
+        self.populate_menu_tree()
         if self.selected_tree_item_id and self.menu_tree.exists(self.selected_tree_item_id):
              self.menu_tree.selection_set(self.selected_tree_item_id)
              self.menu_tree.focus(self.selected_tree_item_id)
 
         if self.app_callbacks.get('set_dirty_callback'): self.app_callbacks['set_dirty_callback'](True)
-        messagebox.showinfo("Item Updated", "Changes applied to the selected menu item locally.", parent=self)
+        # messagebox.showinfo("Item Updated", "Changes applied to the selected menu item locally.", parent=self)
 
 
     def apply_all_changes_to_resource(self):

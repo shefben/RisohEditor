@@ -590,35 +590,91 @@ class App(customtkinter.CTk):
         except Exception as e: self.show_error_message("Save RC Error", f"Failed to save RC file: {e}")
 
 
+    def _write_res_string_or_id(self, stream: io.BytesIO, value: Union[str, int]) -> int:
+        """Writes a Type/Name field to a RES stream. Returns size of written field (including padding)."""
+        if isinstance(value, int): # Numeric ID
+            stream.write(struct.pack('<HH', 0xFFFF, value))
+            return 4
+        elif isinstance(value, str): # String
+            # Must be null-terminated UTF-16LE, then padded to DWORD
+            str_bytes = value.encode('utf-16-le') + b'\x00\x00'
+            stream.write(str_bytes)
+            padding_needed = (4 - (len(str_bytes) % 4)) % 4
+            if padding_needed > 0:
+                stream.write(b'\x00' * padding_needed)
+            return len(str_bytes) + padding_needed
+        else:
+            # Fallback for safety, should not happen with ResourceIdentifier
+            stream.write(struct.pack('<HH', 0xFFFF, 0))
+            return 4
+
     def save_as_res_file(self, filepath: str):
-        # ... (same as before) ...
+        """Saves resources directly to a binary .RES file."""
         try:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                temp_rc_path = os.path.join(temp_dir, "temp_script.rc")
-                with open(temp_rc_path, "w", encoding="utf-8") as f_temp_rc:
-                    current_lang_id = -1
-                    sorted_resources = sorted(self.resources, key=lambda r: (str(self.get_type_display_name(r.identifier.type_id)), str(r.identifier.name_id), r.identifier.language_id))
-                    for res_obj in sorted_resources:
-                        if res_obj.identifier.language_id != current_lang_id:
-                            if res_obj.identifier.language_id != LANG_NEUTRAL: primary = res_obj.identifier.language_id & 0x3FF; sub = (res_obj.identifier.language_id >> 10) & 0x3F; f_temp_rc.write(f"LANGUAGE {primary}, {sub}\n")
-                            current_lang_id = res_obj.identifier.language_id
-                        f_temp_rc.write(res_obj.to_rc_text() + "\n\n")
-                file_resource_dirs = set()
-                if self.current_filepath and self.current_file_type == ".rc": file_resource_dirs.add(os.path.dirname(self.current_filepath))
-                for res in self.resources:
-                    if isinstance(res, FileResource) and res.filepath:
-                        fp_to_check = res.filepath; base_for_relative = os.path.dirname(self.current_filepath or ".")
-                        if not os.path.isabs(fp_to_check): fp_to_check = os.path.join(base_for_relative, fp_to_check)
-                        if os.path.isfile(fp_to_check): file_resource_dirs.add(os.path.dirname(os.path.abspath(fp_to_check)))
-                        elif os.path.isdir(os.path.dirname(fp_to_check)): file_resource_dirs.add(os.path.dirname(fp_to_check))
-                effective_include_paths = (self.include_paths or []) + list(file_resource_dirs); effective_include_paths.append(temp_dir)
-                success = run_windres_compile(rc_filepath=temp_rc_path, res_filepath=filepath, windres_path=self.windres_path, include_paths=list(set(effective_include_paths)))
-                if success:
-                    self.current_filepath = filepath; self.current_file_type = ".res"; self.set_app_dirty(False); self.title(f"Python Resource Editor - {os.path.basename(filepath)}")
-                    self.show_info_message("Save Successful", f"File saved as RES: {filepath}")
-                else: self.show_error_message("Save RES Error", "windres compilation failed. Check console for details.")
-        except WindresError as we: self.show_error_message("Windres Execution Error", f"Failed to compile to RES: {we}")
-        except Exception as e: self.show_error_message("Save RES Error", f"Failed to save RES file: {e}")
+            with open(filepath, 'wb') as f:
+                sorted_resources = sorted(self.resources, key=lambda r: (str(self.get_type_display_name(r.identifier.type_id)), str(r.identifier.name_id), r.identifier.language_id))
+
+                for res_obj in sorted_resources:
+                    if not hasattr(res_obj, 'to_binary_data') or not callable(res_obj.to_binary_data):
+                        print(f"Warning: Resource {res_obj.identifier} does not have a to_binary_data method. Skipping for RES save.")
+                        continue
+
+                    binary_data = res_obj.to_binary_data()
+                    if binary_data is None: # Should not happen if method exists and is implemented
+                        print(f"Warning: to_binary_data for {res_obj.identifier} returned None. Skipping.")
+                        continue
+
+                    data_size = len(binary_data)
+
+                    # Calculate HeaderSize:
+                    # Type field size + Name field size + fixed fields size (16 bytes)
+                    type_field_size = 0
+                    name_field_size = 0
+
+                    # Temp stream to calculate Type/Name field sizes without writing to main file yet
+                    temp_stream = io.BytesIO()
+                    type_field_size = self._write_res_string_or_id(temp_stream, res_obj.identifier.type_id)
+                    name_field_size = self._write_res_string_or_id(temp_stream, res_obj.identifier.name_id)
+                    temp_stream.close()
+
+                    fixed_header_fields_size = 16 # DataVersion, MemoryFlags, LanguageId, Version, Characteristics
+                    header_size = type_field_size + name_field_size + fixed_header_fields_size
+
+                    # Write DataSize and HeaderSize
+                    f.write(struct.pack('<LL', data_size, header_size))
+
+                    # Write Type field
+                    self._write_res_string_or_id(f, res_obj.identifier.type_id)
+
+                    # Write Name field
+                    self._write_res_string_or_id(f, res_obj.identifier.name_id)
+
+                    # Write fixed header fields
+                    data_version = 0
+                    memory_flags = 0x0030 # MOVEABLE | PURE | PRELOAD (common default)
+                    language_id = res_obj.identifier.language_id
+                    version = 0 # User-defined
+                    characteristics = 0 # User-defined
+                    f.write(struct.pack('<LHHLL', data_version, memory_flags, language_id, version, characteristics))
+
+                    # Write resource data
+                    f.write(binary_data)
+
+                    # Pad resource data to DWORD boundary
+                    padding_needed = (4 - (data_size % 4)) % 4
+                    if padding_needed > 0:
+                        f.write(b'\x00' * padding_needed)
+
+            self.current_filepath = filepath
+            self.current_file_type = ".res"
+            self.set_app_dirty(False)
+            self.title(f"Python Resource Editor - {os.path.basename(filepath)}")
+            self.show_info_message("Save Successful", f"File saved as RES: {filepath}")
+
+        except Exception as e:
+            self.show_error_message("Save RES Error", f"Failed to save RES file directly: {e}")
+            import traceback
+            traceback.print_exc()
 
 
     def on_save_as_file(self):
