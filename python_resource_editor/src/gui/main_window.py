@@ -126,6 +126,7 @@ class App(customtkinter.CTk):
         self.tree_frame = customtkinter.CTkFrame(self, width=350)
         self.tree_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
         self.tree_frame.grid_propagate(False)
+        self.tree_frame.grid_rowconfigure(0, weight=1) # Make treeview expand
 
         self.treeview = ttk.Treeview(self.tree_frame, columns=("Name", "Type", "Language"), show="tree headings")
         self.treeview.heading("#0", text="Resource Path")
@@ -142,8 +143,14 @@ class App(customtkinter.CTk):
         self.editor_frame = customtkinter.CTkFrame(self)
         self.editor_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
         self.editor_frame.grid_propagate(False)
-        editor_label = customtkinter.CTkLabel(self.editor_frame, text="Select a resource to view/edit.")
-        editor_label.pack(padx=10, pady=10, anchor="center")
+        # editor_label = customtkinter.CTkLabel(self.editor_frame, text="Select a resource to view/edit.")
+        # editor_label.pack(padx=10, pady=10, anchor="center") # Initial label removed, handled by _clear_editor_frame
+
+        # Status Bar
+        self.grid_rowconfigure(1, weight=0) # Status bar row
+        self.statusbar_label = customtkinter.CTkLabel(self, text="Ready", anchor="w")
+        self.statusbar_label.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=(2, 5))
+        self._status_clear_job = None # For scheduling status clear
 
 
     def create_menu_bar(self):
@@ -238,6 +245,7 @@ class App(customtkinter.CTk):
                  self.filemenu_reference.entryconfig("Save", state="normal" if self.current_file_type in ['.rc', '.res', '.exe', '.dll', '.ocx', '.sys', '.scr'] else "disabled")
                  self.filemenu_reference.entryconfig("Save As...", state="normal")
                  self.filemenu_reference.entryconfig("Import Resource from File...", state="normal") # Enable after a context is open
+            self.show_status(f"Opened: {os.path.basename(self.current_filepath)} ({len(self.resources)} resources found)", 5000)
             if self.editmenu_reference:
                  self.editmenu_reference.entryconfig("Add Resource...", state="normal")
                  # Other edit items depend on selection
@@ -246,7 +254,9 @@ class App(customtkinter.CTk):
                  self.editmenu_reference.entryconfig("Clone to New Language...", state="disabled")
                  self.editmenu_reference.entryconfig("Export Selected Resource As...", state="disabled")
         except Exception as e:
-            self.show_error_message("Parsing Error", f"An error occurred: {e}")
+            err_msg = f"Error opening {os.path.basename(filepath)}: {e}"
+            self.show_error_message("Parsing Error", f"An error occurred: {e}") # Keep messagebox for critical errors
+            self.show_status(err_msg, 7000, is_error=True)
             self.title(f"Python Resource Editor - Error loading {os.path.basename(filepath)}")
             import traceback; traceback.print_exc()
 
@@ -443,6 +453,7 @@ class App(customtkinter.CTk):
                 self.resources.append(new_res); new_res.dirty = True; self.populate_treeview(); self.set_app_dirty(True)
                 for item_id, res_in_map in self.tree_item_to_resource.items():
                     if res_in_map == new_res: self.treeview.focus(item_id); self.treeview.selection_set(item_id); break
+                self.show_status(f"Added resource: {res_type_str} - {parsed_name}", 4000)
 
 
     def on_delete_resource(self):
@@ -455,8 +466,13 @@ class App(customtkinter.CTk):
                 try:
                     self.resources.remove(res_obj); self.populate_treeview(); self.set_app_dirty(True); self._clear_editor_frame(); self.current_selected_resource_item_id = None
                     if self.editmenu_reference: self.editmenu_reference.entryconfig("Delete Resource", state="disabled")
-                except ValueError: self.show_error_message("Delete Error", "Could not find resource in list.")
-        else: self.show_error_message("Delete Error", "No valid resource selected.")
+                    self.show_status(f"Resource '{res_obj.identifier.name_id_to_str()}' deleted.", 3000)
+                except ValueError:
+                    self.show_error_message("Delete Error", "Could not find resource in list.")
+                    self.show_status("Error deleting resource.", 5000, is_error=True)
+        else:
+            self.show_error_message("Delete Error", "No valid resource selected.")
+            self.show_status("Delete Error: No valid resource selected.", 5000, is_error=True)
 
     def on_change_resource_language(self):
         # ... (same as before) ...
@@ -469,8 +485,11 @@ class App(customtkinter.CTk):
         except: self.show_error_message("Invalid Input", "Language ID must be a number (0-65535)."); return
         for r in self.resources:
             if r != res_obj and r.identifier.type_id == res_obj.identifier.type_id and r.identifier.name_id == res_obj.identifier.name_id and r.identifier.language_id == new_lang_id:
-                self.show_error_message("Conflict", "Resource with this Type, Name, and new Language ID already exists."); return
+                self.show_error_message("Conflict", "Resource with this Type, Name, and new Language ID already exists.");
+                self.show_status("Error: Language ID conflict.", 5000, is_error=True)
+                return
         res_obj.identifier.language_id = new_lang_id; res_obj.dirty = True; self.set_app_dirty(True); self.populate_treeview()
+        self.show_status(f"Language changed for '{res_obj.identifier.name_id_to_str()}'.", 3000)
 
 
     def on_clone_to_new_language(self):
@@ -485,11 +504,14 @@ class App(customtkinter.CTk):
         if new_lang_id == res_obj.identifier.language_id: self.show_error_message("Error", "New language is same as current."); return
         for r in self.resources:
             if r.identifier.type_id == res_obj.identifier.type_id and r.identifier.name_id == res_obj.identifier.name_id and r.identifier.language_id == new_lang_id:
-                self.show_error_message("Conflict", "Resource with this Type, Name, and target Language ID already exists."); return
+                self.show_error_message("Conflict", "Resource with this Type, Name, and target Language ID already exists.");
+                self.show_status("Error: Cloned language ID conflict.", 5000, is_error=True)
+                return
         cloned_res = copy.deepcopy(res_obj); cloned_res.identifier.language_id = new_lang_id; cloned_res.dirty = True
         self.resources.append(cloned_res); self.set_app_dirty(True); self.populate_treeview()
+        self.show_status(f"Resource '{res_obj.identifier.name_id_to_str()}' cloned to lang {new_lang_id}.", 4000)
 
-    def on_import_resource_from_file(self):
+    def on_import_resource_from_file(self): # Already has show_info_message, status update can be added
         rt_display_names = [self.get_type_display_name(rt) for rt in self.RT_MAP.keys() if isinstance(rt, int) or rt in ["TOOLBAR", "ACCELERATORS", "VERSIONINFO", "HTML", "MANIFEST", "RCDATA"]]
         dialog = ImportResourceDialog(self, available_types=sorted(list(set(rt_display_names))))
         if dialog.result:
@@ -497,7 +519,10 @@ class App(customtkinter.CTk):
             try:
                 parsed_name = int(res_name_or_id_str) if res_name_or_id_str.isdigit() or res_name_or_id_str.startswith("0x") else res_name_or_id_str
                 parsed_lang = int(res_lang_str)
-            except ValueError: self.show_error_message("Invalid Input", "Name/ID or Language ID is not valid."); return
+            except ValueError:
+                self.show_error_message("Invalid Input", "Name/ID or Language ID is not valid.")
+                self.show_status("Import Error: Invalid Name/ID or Language.", 5000, is_error=True)
+                return
 
             actual_res_type = self.RT_NAME_TO_ID_MAP.get(res_type_str, res_type_str)
             identifier = ResourceIdentifier(type_id=actual_res_type, name_id=parsed_name, language_id=parsed_lang)
@@ -521,7 +546,8 @@ class App(customtkinter.CTk):
             if new_res:
                 self.resources.append(new_res); new_res.dirty = True
                 self.populate_treeview(); self.set_app_dirty(True)
-                self.show_info_message("Import Successful", f"Resource '{parsed_name}' imported from {os.path.basename(filepath)}.")
+                self.show_info_message("Import Successful", f"Resource '{parsed_name}' imported from {os.path.basename(filepath)}.") # Keep info box
+                self.show_status(f"Imported '{parsed_name}' from {os.path.basename(filepath)}.", 4000)
 
 
     def on_export_selected_resource(self):
@@ -599,8 +625,11 @@ class App(customtkinter.CTk):
                         current_lang_id = res_obj.identifier.language_id
                     f.write(res_obj.to_rc_text() + "\n\n")
             self.current_filepath = filepath; self.current_file_type = ".rc"; self.set_app_dirty(False); self.title(f"Python Resource Editor - {os.path.basename(filepath)}")
-            self.show_info_message("Save Successful", f"File saved as RC: {filepath}")
-        except Exception as e: self.show_error_message("Save RC Error", f"Failed to save RC file: {e}")
+            self.show_info_message("Save Successful", f"File saved as RC: {filepath}") # Keep messagebox
+            self.show_status(f"Saved RC: {os.path.basename(filepath)}", 5000)
+        except Exception as e:
+            self.show_error_message("Save RC Error", f"Failed to save RC file: {e}")
+            self.show_status(f"Error saving RC: {e}", 7000, is_error=True)
 
 
     def _write_res_string_or_id(self, stream: io.BytesIO, value: Union[str, int]) -> int:
@@ -630,11 +659,13 @@ class App(customtkinter.CTk):
                 for res_obj in sorted_resources:
                     if not hasattr(res_obj, 'to_binary_data') or not callable(res_obj.to_binary_data):
                         print(f"Warning: Resource {res_obj.identifier} does not have a to_binary_data method. Skipping for RES save.")
+                        skipped_count +=1
                         continue
 
                     binary_data = res_obj.to_binary_data()
-                    if binary_data is None: # Should not happen if method exists and is implemented
+                    if binary_data is None:
                         print(f"Warning: to_binary_data for {res_obj.identifier} returned None. Skipping.")
+                        skipped_count +=1
                         continue
 
                     data_size = len(binary_data)
@@ -682,10 +713,14 @@ class App(customtkinter.CTk):
             self.current_file_type = ".res"
             self.set_app_dirty(False)
             self.title(f"Python Resource Editor - {os.path.basename(filepath)}")
-            self.show_info_message("Save Successful", f"File saved as RES: {filepath}")
+            msg = f"File saved as RES: {os.path.basename(filepath)}"
+            if skipped_count > 0: msg += f" ({skipped_count} resources skipped due to missing binary data capability)."
+            self.show_info_message("Save Successful", msg) # Keep messagebox
+            self.show_status(msg, 5000)
 
         except Exception as e:
             self.show_error_message("Save RES Error", f"Failed to save RES file directly: {e}")
+            self.show_status(f"Error saving RES: {e}", 7000, is_error=True)
             import traceback
             traceback.print_exc()
 
@@ -725,12 +760,17 @@ class App(customtkinter.CTk):
                         self.current_file_type = ext
                         if self.save_pe_file(filepath): # Update the new copy
                              self.show_info_message("Save As Successful", f"PE File saved as '{os.path.basename(filepath)}' and updated.")
-                        # save_pe_file shows errors if update fails
+                             self.show_status(f"Saved PE As: {os.path.basename(filepath)}", 5000)
+                        # save_pe_file already shows error messages and status
                     except Exception as e:
                         self.show_error_message("Save As PE Error", f"Failed to copy file to '{filepath}': {e}")
+                        self.show_status(f"Error saving PE As: {e}", 7000, is_error=True)
                 else:
                     self.show_error_message("Save As PE Error", "To save as a new PE file, please open an existing PE file first to use as a template, modify resources, then 'Save As'. Direct creation of PE from scratch is not supported.")
-        else: self.show_error_message("Save As Error", f"Unsupported file type: {ext}. Choose .rc, .res, .exe, or .dll.")
+                    self.show_status("Save As PE Error: No template PE file open.", 7000, is_error=True)
+        else:
+            self.show_error_message("Save As Error", f"Unsupported file type: {ext}. Choose .rc, .res, .exe, or .dll.")
+            self.show_status(f"Save As Error: Unsupported type '{ext}'.", 5000, is_error=True)
 
     def on_save_file(self):
         if not self.current_filepath:
@@ -739,107 +779,122 @@ class App(customtkinter.CTk):
 
         if not self.resources and self.current_filepath:
             if not tkmessagebox.askyesno("Save Empty?", "No resources. Save empty file? (This might corrupt PE files or create empty RC/RES)", parent=self):
-                # self.on_save_as_file() # Optionally offer Save As if they don't want to save empty
                 return
 
         if self.current_file_type == ".rc":
-            self.save_as_rc_file(self.current_filepath) # save_as_rc_file handles setting dirty flag
+            self.save_as_rc_file(self.current_filepath)
         elif self.current_file_type == ".res":
-            self.save_as_res_file(self.current_filepath) # save_as_res_file handles setting dirty flag
+            self.save_as_res_file(self.current_filepath)
         elif self.current_file_type in [".exe", ".dll", ".ocx", ".sys", ".scr"]:
             if self.save_pe_file(self.current_filepath):
                  self.show_info_message("Save Successful", f"PE File '{os.path.basename(self.current_filepath)}' updated successfully.")
-            # save_pe_file handles its own error messages and dirty flag on success
+                 self.show_status(f"Saved PE: {os.path.basename(self.current_filepath)}", 5000)
+            # save_pe_file handles its own error messages and status for failures
         else:
-            # Fallback to Save As if current type is unknown or not directly saveable
             self.on_save_as_file()
 
 
     def save_pe_file(self, filepath: str) -> bool:
         from ..utils.winapi_ctypes import kernel32, BeginUpdateResourcesW, UpdateResourceW, EndUpdateResourcesW, MAKEINTRESOURCE, INVALID_HANDLE_VALUE
-        import shutil # For backup
+        import shutil
 
         backup_path = filepath + ".pyre.bak"
         try:
-            if os.path.exists(backup_path): os.remove(backup_path) # Remove old backup first
+            if os.path.exists(backup_path): os.remove(backup_path)
             shutil.copy2(filepath, backup_path)
+            self.show_status(f"Backup created: {os.path.basename(backup_path)}", 2000)
         except Exception as e:
             self.show_error_message("Backup Error", f"Failed to create backup for '{filepath}': {e}")
+            self.show_status(f"Backup Error for '{os.path.basename(filepath)}': {e}", 7000, is_error=True)
             return False
 
-        hUpdate = BeginUpdateResourcesW(filepath, True) # True = delete existing resources
+        hUpdate = BeginUpdateResourcesW(filepath, True)
 
-        if not hUpdate or hUpdate == INVALID_HANDLE_VALUE: # Check for NULL or specific invalid handle
+        if not hUpdate or hUpdate == INVALID_HANDLE_VALUE:
             err = ctypes.get_last_error()
-            try: os.remove(backup_path) # Clean up backup if BeginUpdate failed
+            try:
+                if os.path.exists(backup_path): os.remove(backup_path)
             except OSError: pass
             self.show_error_message("PE Update Error", f"BeginUpdateResourcesW failed (Error {err}). Cannot update PE file.")
+            self.show_status(f"BeginUpdateResourcesW failed (Error {err}) on {os.path.basename(filepath)}", 7000, is_error=True)
             return False
 
-        success_all = True
-        updated_resource_count = 0
-        skipped_resource_count = 0
+        success_all = True; updated_resource_count = 0; skipped_resource_count = 0
+        self.show_status(f"Starting resource update for {os.path.basename(filepath)}...", 2000)
 
         for res_obj in self.resources:
             res_type_val = res_obj.identifier.type_id
             res_name_val = res_obj.identifier.name_id
-
             lpType = MAKEINTRESOURCE(res_type_val) if isinstance(res_type_val, int) else ctypes.wintypes.LPWSTR(str(res_type_val))
             lpName = MAKEINTRESOURCE(res_name_val) if isinstance(res_name_val, int) else ctypes.wintypes.LPWSTR(str(res_name_val))
             wLang = res_obj.identifier.language_id
 
-            try:
-                binary_data = res_obj.to_binary_data()
-            except Exception as e_data: # Catch errors from to_binary_data itself
+            try: binary_data = res_obj.to_binary_data()
+            except Exception as e_data:
+                msg = f"Failed to get binary data for resource {res_obj.identifier.type_id_to_str()}/{res_obj.identifier.name_id_to_str()}: {e_data}"
                 print(f"Error getting binary data for {res_obj.identifier}: {e_data}")
-                self.show_error_message("Data Conversion Error", f"Failed to get binary data for resource {res_obj.identifier.type_id_to_str()}/{res_obj.identifier.name_id_to_str()}: {e_data}")
-                skipped_resource_count +=1
-                continue # Skip this resource
+                self.show_error_message("Data Conversion Error", msg)
+                self.show_status(f"Data error for res {res_obj.identifier.name_id_to_str()}", 5000, is_error=True)
+                skipped_resource_count +=1; continue
 
             if binary_data is None:
                 print(f"Warning: No binary data for resource {res_obj.identifier}. Skipping update for this resource.")
-                skipped_resource_count +=1
-                continue
+                skipped_resource_count +=1; continue
 
-            # Ensure lpData is a pointer to the data. ctypes.c_char_p is for null-terminated strings.
-            # For arbitrary binary data, use ctypes.create_string_buffer or pass data directly if API allows (UpdateResourceW needs LPVOID).
-            # Python bytes are immutable sequences of single bytes. Passing them directly to LPVOID should work
-            # as ctypes will handle it as a pointer to the first byte if the argtype is LPVOID/c_void_p.
             lpData = binary_data
             cbData = len(binary_data)
 
             if not UpdateResourceW(hUpdate, lpType, lpName, wLang, lpData, cbData):
                 err = ctypes.get_last_error()
-                self.show_error_message("PE Update Error", f"UpdateResourceW failed for {res_obj.identifier.type_id_to_str()}/{res_obj.identifier.name_id_to_str()} (Error {err}).")
-                success_all = False
-                break
+                msg = f"UpdateResourceW failed for {res_obj.identifier.type_id_to_str()}/{res_obj.identifier.name_id_to_str()} (Error {err})."
+                self.show_error_message("PE Update Error", msg)
+                self.show_status(msg, 7000, is_error=True)
+                success_all = False; break
             updated_resource_count +=1
 
-        if success_all:
-            if not EndUpdateResourcesW(hUpdate, False): # False = Write changes
+        if success_all and updated_resource_count > 0: # Check if any resources were actually processed
+            if not EndUpdateResourcesW(hUpdate, False):
                 err = ctypes.get_last_error()
                 self.show_error_message("PE Update Error", f"EndUpdateResourcesW (commit) failed (Error {err}). Restoring from backup.")
+                self.show_status(f"EndUpdateResourcesW (commit) failed (Error {err}) for {os.path.basename(filepath)}", 7000, is_error=True)
                 try:
                     if os.path.exists(backup_path): shutil.move(backup_path, filepath)
                     else: print("Error: Backup file missing, cannot restore.")
                 except Exception as e_restore:
                     self.show_error_message("Restore Error", f"Failed to restore from backup '{backup_path}': {e_restore}")
                 return False
-            else: # Successfully committed
+            else:
                 try:
                     if os.path.exists(backup_path): os.remove(backup_path)
                 except OSError: pass
-                self.set_app_dirty(False) # Changes are saved
-                # self.show_info_message("PE Update Successful", f"{updated_resource_count} resources updated in '{os.path.basename(filepath)}'. {skipped_resource_count} skipped.")
+                self.set_app_dirty(False)
+                # self.show_info_message below handles combined success message
                 return True
-        else: # Loop broke due to an UpdateResourceW failure or all skipped
-            EndUpdateResourcesW(hUpdate, True) # True = Discard changes
-            self.show_info_message("PE Update Failed", f"Resource updates failed. Restoring '{os.path.basename(filepath)}' from backup. {skipped_resource_count} resources were skipped, {updated_resource_count} attempted before failure.")
+        elif success_all and updated_resource_count == 0 and skipped_resource_count == 0 and len(self.resources) == 0: # Saving empty to PE
+            # This means BeginUpdate(delete=True) was called, and then EndUpdate(commit=False)
+            # This effectively clears resources from the PE.
+            if not EndUpdateResourcesW(hUpdate, False): # Commit the deletion of all resources
+                err = ctypes.get_last_error(); self.show_error_message("PE Update Error", f"EndUpdateResourcesW (commit empty) failed (Error {err}). Restoring."); self.show_status(f"Commit empty failed (Error {err})", 7000, is_error=True)
+                try: shutil.move(backup_path, filepath)
+                except: pass
+                return False
+            else:
+                if os.path.exists(backup_path): os.remove(backup_path)
+                self.set_app_dirty(False)
+                # self.show_info_message("PE Update", f"All resources cleared from '{os.path.basename(filepath)}'.")
+                return True
+        else: # Loop broke (success_all=False) or all resources skipped but there were resources
+            EndUpdateResourcesW(hUpdate, True)
+            restore_msg_suffix = ""
             try:
                 if os.path.exists(backup_path): shutil.move(backup_path, filepath)
-                else: print("Error: Backup file missing, cannot restore on failure.")
+                else: restore_msg_suffix = " Backup missing, could not restore."
             except Exception as e_restore:
-                self.show_error_message("Restore Error", f"Failed to restore from backup '{backup_path}' on failure: {e_restore}")
+                restore_msg_suffix = f" Restore from backup also failed: {e_restore}"
+
+            final_msg = f"Resource updates failed for {os.path.basename(filepath)}. Changes discarded.{restore_msg_suffix}"
+            # No need for info_message here, error already shown by UpdateResourceW failure
+            self.show_status(final_msg, 7000, is_error=True)
             return False
 
     def on_about(self):
@@ -860,8 +915,36 @@ class App(customtkinter.CTk):
         # ... (same as before) ...
         if not self.app_dirty_flag: return True
         res = tkmessagebox.askyesnocancel("Unsaved Changes", "Save changes before proceeding?", parent=self)
-        if res is True: self.on_save_file(); return not self.app_dirty_flag
+        if res is True:
+            self.on_save_file()
+            # If on_save_file failed (e.g. user cancelled Save As), app is still dirty.
+            return not self.app_dirty_flag
         return res is False
+
+    def show_status(self, message: str, duration_ms: int = 0, is_error: bool = False):
+        if not hasattr(self, 'statusbar_label') or self.statusbar_label is None:
+            print(f"Status (no bar): {message}")
+            return
+
+        # TODO: Add color change for error
+        # current_fg_color = self.statusbar_label.cget("fg_color") # This might not be text color
+        # error_color = ("#ffcccc", "#552222") # Example light/dark error bg or text color
+        # normal_color = ...
+        # self.statusbar_label.configure(text_color=error_color if is_error else normal_color)
+
+        self.statusbar_label.configure(text=message)
+
+        if hasattr(self, '_status_clear_job') and self._status_clear_job is not None:
+            self.after_cancel(self._status_clear_job)
+            self._status_clear_job = None
+
+        if duration_ms > 0:
+            self._status_clear_job = self.after(duration_ms, lambda: self.statusbar_label.configure(text="Ready"))
+        elif not message or message == "Ready": # If clearing or setting to Ready, don't schedule clear
+             if hasattr(self, '_status_clear_job') and self._status_clear_job is not None:
+                self.after_cancel(self._status_clear_job)
+                self._status_clear_job = None
+
 
     def on_closing(self):
         # ... (same as before) ...

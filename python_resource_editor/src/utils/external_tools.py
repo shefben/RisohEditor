@@ -19,18 +19,17 @@ def get_tool_path(tool_filename: str) -> str:
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
         bundle_dir = sys._MEIPASS
 
-        # Path 1: Tool directly in MEIPASS (e.g., datas=[('path/to/tool.exe', '.')])
-        tool_path_root = os.path.join(bundle_dir, tool_filename)
-        if os.path.exists(tool_path_root):
-            return tool_path_root
-
-        # Path 2: Tool in 'data/bin' subdir of MEIPASS (e.g., datas=[('path/to/tool.exe', 'data/bin')])
-        # This matches the build.spec structure.
+        # Path 1 (Primary for bundle): Tool in 'data/bin' subdir of MEIPASS, matching build.spec
         tool_path_databin = os.path.join(bundle_dir, "data", "bin", tool_filename)
         if os.path.exists(tool_path_databin):
             return tool_path_databin
 
-        # Path 3: Tool in 'bin' subdir of MEIPASS (e.g., datas=[('path/to/tool.exe', 'bin')])
+        # Path 2 (Secondary for bundle): Tool directly in MEIPASS root
+        tool_path_root = os.path.join(bundle_dir, tool_filename)
+        if os.path.exists(tool_path_root):
+            return tool_path_root
+
+        # Path 3 (Tertiary for bundle): Tool in 'bin' subdir of MEIPASS (less likely given spec)
         tool_path_bin = os.path.join(bundle_dir, "bin", tool_filename)
         if os.path.exists(tool_path_bin):
             return tool_path_bin

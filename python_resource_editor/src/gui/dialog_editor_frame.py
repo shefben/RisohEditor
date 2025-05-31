@@ -266,13 +266,53 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                 if str(current_val) != str(new_typed_val):
                     setattr(target_obj, attr_name, new_typed_val); changed = True
 
+            # Specific handling for symbolic names for DialogProperties' menu and class
+            if isinstance(target_obj, DialogProperties):
+                if 'menu_name' in self.prop_widgets_map:
+                    menu_name_val = getattr(target_obj, 'menu_name') # This was just set by setattr above
+                    if isinstance(menu_name_val, int):
+                        if target_obj.symbolic_menu_name is not None: # Was symbolic, now int
+                            target_obj.symbolic_menu_name = None; changed = True
+                    else: # string
+                        if target_obj.symbolic_menu_name != menu_name_val:
+                             target_obj.symbolic_menu_name = menu_name_val if menu_name_val else None; changed = True
+
+                if 'class_name' in self.prop_widgets_map:
+                    class_name_val = getattr(target_obj, 'class_name') # This was just set by setattr
+                    if isinstance(class_name_val, int):
+                        if target_obj.symbolic_class_name is not None:
+                             target_obj.symbolic_class_name = None; changed = True
+                    else: # string
+                        if target_obj.symbolic_class_name != class_name_val:
+                            target_obj.symbolic_class_name = class_name_val if class_name_val else None; changed = True
+
             if changed:
                 if self.app_callbacks.get('set_dirty_callback'): self.app_callbacks['set_dirty_callback'](True)
+                if self.app_callbacks.get('show_status_callback'): # Optional status update
+                    self.app_callbacks['show_status_callback']("Properties updated locally.", 3000)
+
                 self.render_dialog_preview()
-                if self.selected_control_entry: self.display_control_properties(self.selected_control_entry)
-                else: self.display_dialog_properties()
-        except ValueError as e: messagebox.showerror("Input Error", f"Invalid value for a numeric/hex field: {e}", parent=self)
-        except Exception as e: messagebox.showerror("Error", f"Could not apply properties: {e}", parent=self)
+                if self.selected_control_entry: # If a control was being edited
+                    # Find the control in self.controls_copy and update it
+                    for i, ctrl in enumerate(self.controls_copy):
+                        if ctrl is target_obj: # Compare by object identity
+                            self.controls_copy[i] = target_obj # target_obj is self.selected_control_entry
+                            break
+                    self.display_control_properties(self.selected_control_entry)
+                else: # Dialog properties were being edited
+                    self.display_dialog_properties()
+            else:
+                if self.app_callbacks.get('show_status_callback'):
+                    self.app_callbacks['show_status_callback']("No changes detected in properties.", 2000)
+
+        except ValueError as e:
+            messagebox.showerror("Input Error", f"Invalid value for a numeric/hex field: {e}", parent=self)
+            if self.app_callbacks.get('show_status_callback'):
+                self.app_callbacks['show_status_callback'](f"Input Error: {e}", 5000, is_error=True)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not apply properties: {e}", parent=self)
+            if self.app_callbacks.get('show_status_callback'):
+                self.app_callbacks['show_status_callback'](f"Error applying properties: {e}", 5000, is_error=True)
 
 
     def on_add_control(self):
