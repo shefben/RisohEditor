@@ -7,7 +7,7 @@ import copy
 from ..core.dialog_parser_util import DialogProperties, DialogControlEntry
 # Import style constants and maps
 from ..core.dialog_parser_util import (
-    ATOM_TO_CLASSNAME_MAP, KNOWN_STRING_CLASSES, ALL_KNOWN_CLASSES,
+    ATOM_TO_CLASSNAME_MAP, KNOWN_STRING_CLASSES, # ALL_KNOWN_CLASSES removed
     STYLE_TO_STR_MAP_BY_CLASS, EXSTYLE_TO_STR_MAP,
     BUTTON_ATOM, EDIT_ATOM, STATIC_ATOM, LISTBOX_ATOM, COMBOBOX_ATOM, SCROLLBAR_ATOM, # Atoms
     WC_LISTVIEW, WC_TREEVIEW, WC_TABCONTROL, WC_PROGRESS, WC_TOOLBAR, # String class names
