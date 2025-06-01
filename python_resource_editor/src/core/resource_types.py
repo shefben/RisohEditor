@@ -476,12 +476,12 @@ class MenuResource(Resource):
                 elif item_flags_value & MF_SEPARATOR: item_type_str = "SEPARATOR"
 
                 # For standard menus, flags_numeric holds all MF_ flags including type and state.
-                entry = MenuItemEntry(item_type_str=item_type_str,
+                entry = MenuItemEntry(item_type=item_type_str,
                                       flags_numeric=item_flags_value,
                                       is_ex=False)
 
                 # entry.flags_list is not populated here; get_flags_display_list() will derive from numeric.
-
+                flags_numeric=item_flags_value
                 if not (item_flags_value & MF_POPUP) and item_type_str != "SEPARATOR":
                     if s.tell() + 2 > len(raw_data): break # Not enough for ID
                     entry.id_val = struct.unpack('<H', s.read(2))[0]
@@ -517,7 +517,7 @@ class MenuResource(Resource):
                     if s.tell() + 4 > len(raw_data): break
                     item_help_id = struct.unpack('<L', s.read(4))[0]
 
-                entry = MenuItemEntry(item_type_str=item_type_str_ex,
+                entry = MenuItemEntry(item_type=item_type_str_ex,
                                       text=item_text_ex,
                                       id_val=ulId,
                                       is_ex=True,
