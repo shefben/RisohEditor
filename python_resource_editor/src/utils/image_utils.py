@@ -116,4 +116,4 @@ if __name__ == "__main__":
     #     print("Dummy BMP saved successfully for testing.")
     #     os.remove("test_dummy.bmp")
 
-```
+

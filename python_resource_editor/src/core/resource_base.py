@@ -153,7 +153,7 @@ class FileResource(Resource): # To hold references to external files like .ico, 
             self.data = None # Set to None on error to distinguish from successfully loaded empty file
             raise # Re-raise the exception so caller knows loading failed
 
-    def to_binary_data(self) -> bytes | None:
+    def to_binary_data(self):
         import os # For os.path.exists and os.path.isabs
         if self.data is not None: # Data might have been pre-loaded or set directly
             return self.data
@@ -199,7 +199,7 @@ class TextBlockResource(Resource): # For blocks of RC text like DIALOG, MENU, or
         # A more robust version would re-format based on internal structures if they get parsed later.
         return self.text_content
 
-    def to_binary_data(self) -> bytes | None:
+    def to_binary_data(self):
         if self.text_content is not None:
             try:
                 # Determine type for encoding. self.identifier.type_id could be int or str.

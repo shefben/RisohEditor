@@ -280,4 +280,4 @@ class VersionInfoEditorFrame(customtkinter.CTkFrame):
 
 if __name__ == '__main__':
     pass
-```
+

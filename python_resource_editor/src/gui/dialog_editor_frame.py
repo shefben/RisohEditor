@@ -351,4 +351,4 @@ class DialogEditorFrame(customtkinter.CTkFrame):
 if __name__ == '__main__':
     # ... (DummyApp for testing remains the same) ...
     pass
-```
+

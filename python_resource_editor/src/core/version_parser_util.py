@@ -212,4 +212,4 @@ if __name__ == '__main__':
     # ... (existing tests can be kept or adapted) ...
     print("\nversion_parser_util.py self-tests completed.")
 
-```
+

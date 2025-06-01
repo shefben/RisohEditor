@@ -10,7 +10,7 @@ import io
 import copy # For deepcopy
 import shutil # For file copy on export
 from PIL import Image, ImageTk, UnidentifiedImageError
-
+from typing import List, Dict, Callable, Optional, Union, Tuple
 from ..core.pe_parser import extract_resources_from_pe
 from ..core.rc_parser import RCParser
 from ..core.res_parser import parse_res_file
@@ -532,7 +532,8 @@ class App(customtkinter.CTk):
             actual_res_type = self.RT_NAME_TO_ID_MAP.get(res_type_str, res_type_str)
             identifier = ResourceIdentifier(type_id=actual_res_type, name_id=parsed_name, language_id=parsed_lang)
             new_res = None
-            original_rc_line = f"{identifier.name_id if isinstance(identifier.name_id, int) else f'\"{identifier.name_id}\"'} {res_type_str} \"{os.path.basename(filepath)}\"" # Use basename for RC line
+            name_id_str = str(identifier.name_id) if isinstance(identifier.name_id, int) else f'"{identifier.name_id}"'
+            original_rc_line = f'{name_id_str} {res_type_str} "{os.path.basename(filepath)}"'
 
             if actual_res_type in [RT_HTML, RT_MANIFEST] or \
                (isinstance(actual_res_type, str) and actual_res_type.upper() in ["TEXT", "HTML", "MANIFEST"]) or \
@@ -975,4 +976,4 @@ if __name__ == '__main__':
     customtkinter.set_default_color_theme("blue")
     app = App()
     app.mainloop()
-```
+

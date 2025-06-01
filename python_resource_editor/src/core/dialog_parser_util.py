@@ -406,13 +406,18 @@ def generate_dialog_rc_text(dialog_props: DialogProperties, controls: List[Dialo
         dialog_ex_style_str = _format_style_flags(dialog_props.ex_style, [EXSTYLE_TO_STR_MAP])
         lines.append(f"EXSTYLE {dialog_ex_style_str}")
 
-    if dialog_props.caption: lines.append(f'CAPTION "{dialog_props.caption.replace("\"", "\"\"")}"')
+    if dialog_props.caption:
+        caption = dialog_props.caption.replace('"', '""')
+        lines.append(f'CAPTION "{caption}"')
+
     if dialog_props.font_size and dialog_props.font_name:
         font_extra = f", {dialog_props.font_weight}, {1 if dialog_props.font_italic else 0}, 0x{dialog_props.font_charset:X}" if dialog_props.is_ex else ""
         lines.append(f'FONT {dialog_props.font_size}, "{dialog_props.font_name}"{font_extra}')
     lines.append("BEGIN")
     for ctrl in controls:
-        text_disp = f'"{ctrl.text.replace("\"", "\"\"")}"'
+        text = ctrl.text.replace('"', '""')
+        text_disp = f'"{text}"'
+
         id_disp = ctrl.get_id_display()
 
         rc_keyword = "CONTROL" # Default
@@ -507,4 +512,4 @@ if __name__ == '__main__':
     # ... (tests from previous step can be kept or adapted) ...
     print("\ndialog_parser_util.py self-tests completed.")
 
-```
+

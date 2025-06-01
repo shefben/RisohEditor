@@ -235,4 +235,4 @@ if __name__ == '__main__':
     customtkinter.set_default_color_theme("blue")
     app = DummyApp()
     app.mainloop()
-```
+

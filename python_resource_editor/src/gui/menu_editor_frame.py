@@ -1,7 +1,7 @@
 import customtkinter
 import tkinter.ttk as ttk
 from tkinter import simpledialog, messagebox
-from typing import List, Dict, Callable, Optional, Union
+from typing import List, Dict, Callable, Optional, Union, Tuple
 import copy
 
 from ..core.menu_parser_util import MenuItemEntry
@@ -414,4 +414,4 @@ if __name__ == '__main__':
     app = DummyApp()
     app.mainloop()
 
-```
+

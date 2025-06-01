@@ -454,9 +454,10 @@ class MenuResource(Resource):
         stream = io.BytesIO(raw_data); items: List[MenuItemEntry] = []; is_ex = False; menu_global_help_id: Optional[int] = None
         def _read_str_utf16_null_terminated(s: io.BytesIO) -> str:
             chars = [];
-            while True: b = s.read(2);
-            if not b or len(b) < 2 or b == b'\x00\x00': break;
-            chars.append(b.decode('utf-16-le', errors='replace'));
+            while True:
+                b = s.read(2)
+                if not b or len(b) < 2 or b == b'\x00\x00': break;
+                chars.append(b.decode('utf-16-le', errors='replace'));
             return "".join(chars)
         def _read_unicode_string_align_dword(s: io.BytesIO) -> str:
             start_pos = s.tell(); text = _read_str_utf16_null_terminated(s)
@@ -1086,4 +1087,4 @@ def get_resource_class(type_id): return RESOURCE_TYPE_MAP.get(type_id, RCDataRes
 if __name__ == '__main__': # Unchanged
     str_id = ResourceIdentifier(RT_STRING, name_id=1, language_id=1033); st_res = StringTableResource(str_id); st_res.add_entry(0, None, "Hello World"); print(st_res.to_rc_text()); print("-" * 20)
     # ... other tests ...
-```
+

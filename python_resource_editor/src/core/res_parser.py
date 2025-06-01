@@ -227,4 +227,4 @@ if __name__ == '__main__':
 
     print("\nTo test with a real RES file, run through src.__main__.py with a RES file path argument.")
 
-```
+
