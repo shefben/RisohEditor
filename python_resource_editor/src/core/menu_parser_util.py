@@ -49,14 +49,29 @@ MFS_HILITE = 0x00000080
 MFS_DEFAULT = 0x00001000
 # MFS_ENABLED = 0x00000000 (default state, item is enabled)
 
-# MENUEX Header constants
-# MENUEX_TEMPLATE_VERSION = 1 # wVersion in MENUEX_TEMPLATE_HEADER (Already defined in resource_types.py where it's used for header parsing)
-# MENUEX_HEADER_OFFSET = 4     # wOffset in MENUEX_TEMPLATE_HEADER (Already defined in resource_types.py)
-MENUEX_TEMPLATE_SIGNATURE_VERSION = 1 # More descriptive name for the version in MENUEX header
-MENUEX_HEADER_OFFSET_TO_ITEMS = 4 # More descriptive name for the offset
+    MENUEX_TEMPLATE_SIGNATURE_VERSION = 1
+    MENUEX_HEADER_OFFSET_TO_ITEMS = 4
+
+    # Reverse map for string to flag value, used in update_numeric_flags_from_strings
+    # This needs to be comprehensive and handle potential ambiguities if names are reused (though less common for flags).
+    # We will filter by is_ex contextually.
+    _STR_TO_FLAG_LOOKUP = {
+        "STRING": MF_STRING, "SEPARATOR": MF_SEPARATOR, "POPUP": MF_POPUP, "OWNERDRAW": MF_OWNERDRAW,
+        "GRAYED": MF_GRAYED, "INACTIVE": MF_DISABLED, "CHECKED": MF_CHECKED,
+        "MENUBARBREAK": MF_MENUBARBREAK, "MENUBREAK": MF_MENUBREAK, "HELP": MF_HELP,
+        "RADIO": MFT_RADIOCHECK, "BITMAP": MFT_BITMAP, "DEFAULT": MFS_DEFAULT, "HILITE": MFS_HILITE,
+        # Explicit MFT/MFS strings if they differ or for clarity, though some values overlap
+        "MFT_STRING": MFT_STRING, "MFT_BITMAP": MFT_BITMAP, "MFT_MENUBARBREAK": MFT_MENUBARBREAK,
+        "MFT_MENUBREAK": MFT_MENUBREAK, "MFT_OWNERDRAW": MF_OWNERDRAW, "MFT_RADIOCHECK": MFT_RADIOCHECK,
+        "MFT_SEPARATOR": MF_SEPARATOR, "MFT_RIGHTORDER": MFT_RIGHTORDER, "MFT_RIGHTJUSTIFY": MFT_RIGHTJUSTIFY,
+        "MFS_GRAYED": MFS_GRAYED, "MFS_DISABLED": MFS_DISABLED, "MFS_CHECKED": MFS_CHECKED,
+        "MFS_HILITE": MFS_HILITE, "MFS_DEFAULT": MFS_DEFAULT,
+        # MFR flags for bResInfo_word if needed, but typically not in flags_list directly.
+    }
+
 
 FLAG_TO_STR_MAP = {
-    MF_STRING: "STRING", # Usually implicit for MENUITEM, but can be explicit MFT_STRING
+        MF_STRING: "STRING",
     MF_SEPARATOR: "SEPARATOR",
     MF_POPUP: "POPUP",
     MF_OWNERDRAW: "OWNERDRAW",
@@ -95,7 +110,97 @@ class MenuItemEntry:
         self.children: List['MenuItemEntry'] = children if children is not None else []
         self.is_ex: bool = is_ex
         self.help_id: Optional[int] = help_id
-        self.bResInfo_word: Optional[int] = bResInfo_word
+        self.bResInfo_word: Optional[int] = bResInfo_word # For MENUEX, raw bResInfo field
+
+    def update_numeric_flags_from_strings(self):
+        """Updates numeric flag attributes based on the string flags in self.flags."""
+        # Reset numeric flags
+        if self.is_ex:
+            self.type_numeric = 0
+            self.state_numeric = 0
+            # bResInfo_word is usually not derived from simple flags, but from item type (POPUP) and position (END).
+            # For now, we don't modify bResInfo_word based on self.flags beyond what item_type implies.
+            if self.item_type == "POPUP": self.type_numeric |= MF_POPUP # MFT_POPUP is MF_POPUP
+            elif self.item_type == "SEPARATOR": self.type_numeric |= MFT_SEPARATOR
+        else:
+            self.type_numeric = 0 # For standard menus, type_numeric holds all flags
+            if self.item_type == "POPUP": self.type_numeric |= MF_POPUP
+            elif self.item_type == "SEPARATOR": self.type_numeric |= MF_SEPARATOR
+
+
+        for flag_str in self.flags:
+            flag_val = _STR_TO_FLAG_LOOKUP.get(flag_str.upper())
+            if flag_val is None:
+                # print(f"Warning: Unknown flag string '{flag_str}' in update_numeric_flags_from_strings.")
+                continue
+
+            if self.is_ex:
+                # Determine if it's a type or state flag for MENUEX
+                # This is a simplification; some flags might be ambiguous or context-dependent.
+                # Based on common usage:
+                if flag_val in [MFT_STRING, MFT_BITMAP, MFT_MENUBARBREAK, MFT_MENUBREAK, MFT_OWNERDRAW, MFT_RADIOCHECK, MFT_SEPARATOR, MFT_RIGHTORDER, MFT_RIGHTJUSTIFY, MF_POPUP]:
+                    self.type_numeric |= flag_val
+                elif flag_val in [MFS_GRAYED, MFS_DISABLED, MFS_CHECKED, MFS_HILITE, MFS_DEFAULT, MF_GRAYED, MF_DISABLED, MF_CHECKED]: # Include MF_ aliases for MFS states
+                    # Handle MFS_GRAYED which implies disabled
+                    if flag_val == MFS_GRAYED: self.state_numeric |= MFS_GRAYED
+                    elif flag_val == MF_GRAYED: self.state_numeric |= MFS_GRAYED # Treat MF_GRAYED as MFS_GRAYED for MENUEX state
+                    elif flag_val == MF_DISABLED and not (self.state_numeric & MFS_GRAYED) : self.state_numeric |= MFS_DISABLED # Only if not already grayed
+                    elif flag_val == MFS_DISABLED and not (self.state_numeric & MFS_GRAYED) : self.state_numeric |= MFS_DISABLED
+                    else: self.state_numeric |= flag_val
+            else: # Standard menu
+                self.type_numeric |= flag_val
+
+        # Ensure item_type consistency for POPUP/SEPARATOR after flag changes
+        if self.is_ex:
+            if self.type_numeric & MF_POPUP: self.item_type = "POPUP"
+            elif self.type_numeric & MFT_SEPARATOR: self.item_type = "SEPARATOR"
+            elif self.item_type in ["POPUP", "SEPARATOR"]: self.item_type = "MENUITEM" # Default back if no longer popup/sep
+        else:
+            if self.type_numeric & MF_POPUP: self.item_type = "POPUP"
+            elif self.type_numeric & MF_SEPARATOR: self.item_type = "SEPARATOR"
+            elif self.item_type in ["POPUP", "SEPARATOR"]: self.item_type = "MENUITEM"
+
+
+    def update_string_flags_from_numeric(self):
+        """Updates self.flags (list of strings) based on numeric flag attributes."""
+        self.flags.clear()
+        # This is essentially what get_flags_display_list does, but we store it in self.flags
+
+        # Handle item type first as it might be implicitly in flags
+        # For MENUEX, POPUP and SEPARATOR are primary MFT_ types.
+        # For Standard, they are primary MF_ types.
+        if self.item_type == "POPUP":
+             if "POPUP" not in self.flags: self.flags.append("POPUP")
+        elif self.item_type == "SEPARATOR":
+            if "SEPARATOR" not in self.flags: self.flags.append("SEPARATOR")
+            # For separators, other state flags are usually not relevant.
+            # But we'll let the loop below add them if they are somehow set numerically.
+
+        for flag_val, flag_name in FLAG_TO_STR_MAP.items():
+            if flag_name in self.flags: continue # Already added (e.g. from item_type)
+
+            is_set = False
+            if self.is_ex:
+                # Check MFT_ type flags (excluding POPUP/SEPARATOR handled by item_type)
+                if flag_val != MF_POPUP and flag_val != MF_SEPARATOR and (self.type_numeric & flag_val):
+                    is_set = True
+                # Check MFS_ state flags
+                if (self.state_numeric & flag_val): # This check might be too broad if flag_val is an MF_ type also
+                    # Refine check for states vs types from FLAG_TO_STR_MAP
+                    if flag_val in [MF_GRAYED, MF_DISABLED, MF_CHECKED, MFS_DEFAULT, MFS_HILITE, MFS_GRAYED, MFS_DISABLED, MFS_CHECKED]:
+                         is_set = True
+                if flag_name == "GRAYED" and (self.state_numeric & MFS_GRAYED) == MFS_GRAYED: is_set = True
+                elif flag_name == "INACTIVE" and (self.state_numeric & MFS_DISABLED) and not (self.state_numeric & MFS_GRAYED) : is_set = True
+
+            else: # Standard Menu
+                if (self.type_numeric & flag_val):
+                    is_set = True
+
+            if is_set:
+                self.flags.append(flag_name)
+
+        self.flags = sorted(list(set(self.flags)))
+
 
     def get_id_display(self) -> str:
         if self.name_val: return self.name_val

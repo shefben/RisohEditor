@@ -93,7 +93,22 @@ class App(customtkinter.CTk):
 
         self.create_menu_bar()
         self.create_main_layout()
+        self._create_treeview_context_menus() # New method call
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def _create_treeview_context_menus(self):
+        self.treeview_empty_context_menu = tkinter.Menu(self, tearoff=0) # Associated with root window
+        self.treeview_empty_context_menu.add_command(label="Add Resource...", command=self.on_add_resource)
+        self.treeview_empty_context_menu.add_command(label="Import Resource from File...", command=self.on_import_resource_from_file)
+
+        self.treeview_item_context_menu = tkinter.Menu(self, tearoff=0) # Associated with root window
+        self.treeview_item_context_menu.add_command(label="Delete Resource", command=self.on_delete_resource)
+        self.treeview_item_context_menu.add_command(label="Change Language...", command=self.on_change_resource_language)
+        self.treeview_item_context_menu.add_command(label="Clone to New Language...", command=self.on_clone_to_new_language)
+        self.treeview_item_context_menu.add_separator()
+        self.treeview_item_context_menu.add_command(label="Export Selected Resource As...", command=self.on_export_selected_resource)
+        self.treeview_item_context_menu.add_command(label="Replace Resource with Imported File...", command=self.on_replace_resource_with_file)
+
 
     def get_type_display_name(self, type_id_or_str):
         if isinstance(type_id_or_str, int):
@@ -139,6 +154,8 @@ class App(customtkinter.CTk):
         self.treeview.column("Language", width=80, anchor="center", stretch=False)
         self.treeview.pack(expand=True, fill="both", padx=2, pady=2)
         self.treeview.bind("<<TreeviewSelect>>", self.on_treeview_select)
+        self.treeview.bind("<Button-3>", self.show_treeview_context_menu) # For Windows/Linux
+        # For macOS, Button-2 might be needed or Control-Button-1, but Button-3 is common for context menus.
 
         self.editor_frame = customtkinter.CTkFrame(self)
         self.editor_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
@@ -327,7 +344,9 @@ class App(customtkinter.CTk):
 
         if res_obj:
             info_text_parts = [f"Type: {self.get_type_display_name(res_obj.identifier.type_id)}", f"Name/ID: {res_obj.identifier.name_id}", f"Language: {res_obj.identifier.language_id} (0x{res_obj.identifier.language_id:04X})", f"Data Class: {type(res_obj).__name__}"]
-            is_image_type = res_obj.identifier.type_id in [RT_ICON, RT_BITMAP, RT_GROUP_ICON, RT_GROUP_CURSOR] or (isinstance(res_obj, FileResource) and any(res_obj.filepath.lower().endswith(ext) for ext in ['.ico', '.bmp', '.png', '.jpg', '.jpeg', '.gif']))
+            is_image_type = res_obj.identifier.type_id in [RT_ICON, RT_BITMAP, RT_CURSOR, RT_GROUP_ICON, RT_GROUP_CURSOR] or \
+                            (isinstance(res_obj, FileResource) and \
+                             any(res_obj.filepath.lower().endswith(ext) for ext in ['.ico', '.cur', '.bmp', '.png', '.jpg', '.jpeg', '.gif']))
             app_callbacks = {'set_dirty_callback': self.set_app_dirty}
 
             if isinstance(res_obj, StringTableResource):
@@ -345,7 +364,111 @@ class App(customtkinter.CTk):
             elif isinstance(res_obj, AcceleratorResource):
                 editor = AcceleratorEditorFrame(self.editor_frame, res_obj, app_callbacks)
                 editor.pack(expand=True, fill="both"); self.current_editor_widget = editor
-            elif is_image_type:
+
+            elif res_obj.identifier.type_id == RT_GROUP_ICON or res_obj.identifier.type_id == RT_GROUP_CURSOR:
+                from ..core.resource_types import GroupIconResource # Ensure class is available for isinstance check
+                info_text_parts.append("Group resource selected.")
+                actual_image_to_display = None
+                member_id_to_find = None
+                expected_member_type = RT_ICON if res_obj.identifier.type_id == RT_GROUP_ICON else RT_CURSOR
+
+                if isinstance(res_obj, GroupIconResource) and hasattr(res_obj, 'icon_entries') and res_obj.icon_entries:
+                    info_text_parts.append(f"Contains {len(res_obj.icon_entries)} member(s).")
+                    selected_entry = None
+                    best_entry_by_size = None # To find the largest if 32x32 is not present
+
+                    for entry_candidate in res_obj.icon_entries:
+                        # Prioritize 32x32, common size
+                        if entry_candidate.width == 32 and entry_candidate.height == 32:
+                            selected_entry = entry_candidate
+                            break
+                        # Track the largest available entry as a fallback
+                        if not best_entry_by_size or \
+                           (entry_candidate.width * entry_candidate.height > best_entry_by_size.width * best_entry_by_size.height):
+                            best_entry_by_size = entry_candidate
+
+                    if not selected_entry: # If 32x32 not found, use the largest identified
+                        selected_entry = best_entry_by_size
+                    if not selected_entry and res_obj.icon_entries: # If still no selection (e.g. all entries were 0x0), take first
+                        selected_entry = res_obj.icon_entries[0]
+
+                    if selected_entry:
+                        member_id_to_find = selected_entry.icon_id
+                        # getattr usage for safety if bit_count_or_y is somehow missing
+                        bits_display = getattr(selected_entry, 'bit_count_or_y', 'N/A')
+                        info_text_parts.append(f"Attempting to display member ID: {member_id_to_find} (Size: {selected_entry.width}x{selected_entry.height}, Bits: {bits_display})")
+
+                        # Search for the actual icon/cursor resource
+                        for r_search in self.resources:
+                            if str(r_search.identifier.name_id) == str(member_id_to_find) and \
+                               r_search.identifier.type_id == expected_member_type:
+                                # Language matching: prefer exact, then neutral group, then neutral member
+                                if r_search.identifier.language_id == res_obj.identifier.language_id or \
+                                   res_obj.identifier.language_id == LANG_NEUTRAL or \
+                                   r_search.identifier.language_id == LANG_NEUTRAL:
+                                    actual_image_to_display = r_search
+                                    if r_search.identifier.language_id == res_obj.identifier.language_id: # Exact lang match is best
+                                        break
+
+                        if actual_image_to_display and actual_image_to_display.data:
+                            try:
+                                img_data_member = io.BytesIO(actual_image_to_display.data)
+                                img = Image.open(img_data_member)
+
+                                # Apply ICO/CUR frame selection logic for the member image
+                                is_member_format_ico_or_cur = (getattr(img, "format", "").upper() in ["ICO", "CUR"])
+
+                                if is_member_format_ico_or_cur and getattr(img, "n_frames", 1) > 1:
+                                    target_size_from_group = (selected_entry.width, selected_entry.height) # Use selected entry's size
+                                    best_frame = None
+                                    # Try to match the size from group entry first
+                                    for i in range(img.n_frames):
+                                        try:
+                                            img.seek(i); current_frame_candidate = img.copy()
+                                            if current_frame_candidate.size == target_size_from_group:
+                                                best_frame = current_frame_candidate; break
+                                        except EOFError: break # No more frames
+
+                                    if not best_frame: # Fallback to largest if specific size not found in member's frames
+                                        img.seek(0); current_best_frame_area = 0
+                                        for i in range(img.n_frames):
+                                            try:
+                                                img.seek(i); current_frame_candidate = img.copy()
+                                                frame_area = current_frame_candidate.width * current_frame_candidate.height
+                                                if frame_area > current_best_frame_area:
+                                                    best_frame = current_frame_candidate; current_best_frame_area = frame_area
+                                            except EOFError: break
+                                    if best_frame: img = best_frame
+                                    else: img.seek(0); img = img.copy() # Default to first frame if all else fails
+
+                                if img.mode not in ("RGB", "RGBA"): img = img.convert("RGBA")
+                                max_dim_display = 256 # Max display dimension in the UI
+                                if img.width > max_dim_display or img.height > max_dim_display: img.thumbnail((max_dim_display, max_dim_display))
+
+                                ctk_image = customtkinter.CTkImage(light_image=img, dark_image=img, size=(img.width, img.height))
+                                image_label = customtkinter.CTkLabel(self.editor_frame, image=ctk_image, text="")
+                                image_label.pack(padx=10, pady=10, expand=True, anchor="center"); image_label.image = ctk_image
+                                info_text_parts.append(f"Displayed member: Type {self.get_type_display_name(actual_image_to_display.identifier.type_id)}, Lang {actual_image_to_display.identifier.language_id}")
+                                info_text_parts.append(f"Member Image Size: {img.width}x{img.height}, Format: {getattr(img,'format','')}")
+                            except Exception as img_err_member:
+                                info_text_parts.append(f"Error displaying member image: {img_err_member}")
+                                if actual_image_to_display.data: info_text_parts.append(f"Member Data (Hex, first 64B): {actual_image_to_display.data[:64].hex(' ', 8)}")
+                        else:
+                            info_text_parts.append(f"Member resource (ID: {member_id_to_find}, Type: {self.get_type_display_name(expected_member_type)}) not found in loaded resources or has no data.")
+                    else:
+                         info_text_parts.append("Could not select a member entry from the group (e.g., group is empty or entries invalid).")
+                elif not hasattr(res_obj, 'icon_entries') or not res_obj.icon_entries : # Not a GroupIconResource or no entries
+                    info_text_parts.append("Group resource has no icon/cursor entries, or is not a recognized GroupIconResource type.")
+
+                # Display collected info text for group resources in a scrollable textbox for clarity
+                info_textbox = customtkinter.CTkTextbox(self.editor_frame, wrap="word", font=("monospace", 10))
+                info_textbox.pack(expand=True, fill="both", padx=5, pady=5)
+                info_textbox.insert("1.0", "\n".join(info_text_parts))
+                info_textbox.configure(state="disabled")
+                self.current_editor_widget = info_textbox
+                info_text_parts = [] # Clear to prevent display by the final generic info_label
+
+            elif is_image_type: # Handles RT_ICON, RT_BITMAP, RT_CURSOR (non-group)
                 try:
                     img_data = None
                     if isinstance(res_obj, FileResource):
@@ -698,6 +821,7 @@ class App(customtkinter.CTk):
 
     def save_as_res_file(self, filepath: str):
         """Saves resources directly to a binary .RES file."""
+        skipped_count = 0 # Initialize skipped_count here
         try:
             with open(filepath, 'wb') as f:
                 sorted_resources = sorted(self.resources, key=lambda r: (str(self.get_type_display_name(r.identifier.type_id)), str(r.identifier.name_id), r.identifier.language_id))
@@ -1010,6 +1134,107 @@ class App(customtkinter.CTk):
     def on_closing(self):
         # ... (same as before) ...
         if self.prompt_save_if_dirty(): self.destroy()
+
+    def show_treeview_context_menu(self, event):
+        item_id = self.treeview.identify_row(event.y)
+
+        if not item_id: # Clicked on empty space
+            # Configure states for empty space menu
+            add_res_state = "normal" if self.current_filepath else "disabled"
+            self.treeview_empty_context_menu.entryconfigure("Add Resource...", state=add_res_state)
+            # Import is generally always available
+            self.treeview_empty_context_menu.entryconfigure("Import Resource from File...", state="normal")
+            try:
+                self.treeview_empty_context_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                self.treeview_empty_context_menu.grab_release()
+        else: # Clicked on an item
+            # Select the item
+            self.treeview.focus(item_id)
+            self.treeview.selection_set(item_id)
+            # self.on_treeview_select() # This is implicitly called by selection_set usually,
+                                      # but explicit call might be needed if state update is critical before menu shows.
+                                      # For now, rely on the main menu bar's state updates which happen in on_treeview_select.
+                                      # The main menu bar state update logic will cover most needs.
+                                      # We just need to ensure the correct resource is "current".
+
+            res_obj = self.tree_item_to_resource.get(item_id)
+            is_actual_resource = res_obj and res_obj in self.resources
+            item_action_state = "normal" if is_actual_resource else "disabled"
+
+            self.treeview_item_context_menu.entryconfigure("Delete Resource", state=item_action_state)
+            self.treeview_item_context_menu.entryconfigure("Change Language...", state=item_action_state)
+            self.treeview_item_context_menu.entryconfigure("Clone to New Language...", state=item_action_state)
+            self.treeview_item_context_menu.entryconfigure("Export Selected Resource As...", state=item_action_state)
+            self.treeview_item_context_menu.entryconfigure("Replace Resource with Imported File...", state=item_action_state)
+
+            try:
+                self.treeview_item_context_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                self.treeview_item_context_menu.grab_release()
+
+    def on_replace_resource_with_file(self):
+        if not self.current_selected_resource_item_id:
+            self.show_error_message("Error", "No resource selected.")
+            return
+
+        res_obj = self.tree_item_to_resource.get(self.current_selected_resource_item_id)
+        if not (res_obj and res_obj in self.resources):
+            self.show_error_message("Error", "Selected item is not a valid resource.")
+            return
+
+        filepath = tkfiledialog.askopenfilename(title=f"Select file to replace resource '{res_obj.identifier.name_id_to_str()}'", parent=self)
+        if not filepath:
+            return
+
+        try:
+            with open(filepath, 'rb') as f:
+                new_data = f.read()
+
+            # Update data based on resource type
+            if isinstance(res_obj, FileResource):
+                res_obj.filepath = filepath # Update filepath to the new source
+                res_obj.data = new_data
+                # Potentially update original_rc_statement if it's important to reflect new filename
+                # For now, just data and filepath.
+                self.show_status(f"FileResource '{res_obj.identifier.name_id_to_str()}' data replaced.", 3000)
+            elif isinstance(res_obj, TextBlockResource):
+                try:
+                    # Attempt to decode as UTF-8; specific resources might need other encodings
+                    res_obj.text_content = new_data.decode('utf-8')
+                    res_obj.data = new_data # Store raw bytes as well
+                    self.show_status(f"TextBlockResource '{res_obj.identifier.name_id_to_str()}' content replaced.", 3000)
+                except UnicodeDecodeError as ude:
+                    self.show_error_message("Encoding Error", f"Failed to decode file as UTF-8: {ude}. Resource data not replaced.")
+                    return
+            elif hasattr(res_obj, 'data'):
+                 # For other types like RCDataResource, or as a fallback for types that store raw data.
+                 # This includes StringTableResource, MenuResource, DialogResource etc. where replacing
+                 # .data directly means their structured editors will be out of sync until a re-parse
+                 # (which is not automatic here). This is a "raw" data replacement.
+                res_obj.data = new_data
+                self.show_status(f"Raw data for resource '{res_obj.identifier.name_id_to_str()}' replaced.", 3000)
+                # Consider adding a warning if res_obj is one of the complex structured types.
+                if isinstance(res_obj, (StringTableResource, MenuResource, DialogResource, VersionInfoResource, AcceleratorResource)):
+                    self.show_info_message("Data Replaced", "Raw data has been replaced. The specialized editor for this resource type might now be out of sync until the file is saved and reloaded.")
+            else:
+                self.show_error_message("Unsupported", f"Replacing content for this resource type ({type(res_obj).__name__}) directly is not fully supported by this operation.")
+                return
+
+            res_obj.dirty = True
+            self.set_app_dirty(True)
+
+            # Refresh the editor view for the selected resource
+            # Store current selection, force re-selection which triggers on_treeview_select
+            current_focus = self.treeview.focus()
+            if current_focus:
+                self.treeview.event_generate("<<TreeviewSelect>>") # This should re-trigger on_treeview_select
+
+        except Exception as e:
+            self.show_error_message("File Replace Error", f"Failed to replace resource content: {e}")
+            import traceback
+            traceback.print_exc()
+
 
 if __name__ == '__main__':
     customtkinter.set_appearance_mode("System")

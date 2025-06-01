@@ -28,6 +28,8 @@ class DialogEditorFrame(customtkinter.CTkFrame):
 
         self.selected_control_entry: Optional[DialogControlEntry] = None
         self.preview_widgets: Dict[DialogControlEntry, customtkinter.CTkBaseClass] = {}
+        self._drag_data = {"widget": None, "control_entry": None, "start_x_widget": 0, "start_y_widget": 0, "start_x_event_root":0, "start_y_event_root":0}
+
 
         self.grid_columnconfigure(0, weight=2)
         self.grid_columnconfigure(1, weight=1)
@@ -86,23 +88,110 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                 widget_class = "placeholder_frame"
 
             preview_widget = None
+            # Pass width and height to constructors for CTk widgets
+            widget_params_with_size = {
+                **widget_params,
+                "width": control_entry.width,
+                "height": control_entry.height
+            }
+
             if widget_class == "placeholder_frame":
-                preview_widget = customtkinter.CTkFrame(self.preview_canvas, border_width=1, fg_color="gray40")
+                preview_widget = customtkinter.CTkFrame(self.preview_canvas, border_width=1, fg_color="gray40", width=control_entry.width, height=control_entry.height)
                 display_class_name = control_entry.class_name if isinstance(control_entry.class_name, str) else ATOM_TO_CLASSNAME_MAP.get(control_entry.class_name, cn_str)
                 customtkinter.CTkLabel(preview_widget, text=f"{display_class_name}\n'{control_entry.text[:20]}' ({control_entry.get_id_display()})").pack(padx=2,pady=2, expand=True, fill="both")
             elif widget_class:
-                if widget_class == tkinter.Listbox:
-                     preview_widget = widget_class(**widget_params)
+                if widget_class == tkinter.Listbox: # Listbox handles width/height differently (chars/lines)
+                     preview_widget = widget_class(**widget_params) # Original params without pixel width/height
                      preview_widget.insert("end", control_entry.text if control_entry.text else "Listbox Item")
-                else: preview_widget = widget_class(**widget_params)
-            else:
-                preview_widget = customtkinter.CTkFrame(self.preview_canvas, border_width=1, fg_color="gray30")
+                elif widget_class in [customtkinter.CTkButton, customtkinter.CTkEntry, customtkinter.CTkLabel, customtkinter.CTkComboBox]:
+                    preview_widget = widget_class(**widget_params_with_size)
+                else: # Should ideally not happen if all CTk widgets are covered
+                    preview_widget = widget_class(**widget_params) # Fallback, might not use w/h correctly
+            else: # Unknown widget, create a placeholder frame
+                preview_widget = customtkinter.CTkFrame(self.preview_canvas, border_width=1, fg_color="gray30", width=control_entry.width, height=control_entry.height)
                 customtkinter.CTkLabel(preview_widget, text=f"Unknown: {cn_str}\n'{control_entry.text[:20]}'").pack(padx=2,pady=2, expand=True, fill="both")
 
             if preview_widget:
-                preview_widget.place(x=control_entry.x, y=control_entry.y, width=control_entry.width, height=control_entry.height)
-                preview_widget.bind("<Button-1>", lambda e, ctrl=control_entry: self.on_control_selected_on_preview(ctrl))
+                # For CTk widgets, width/height are set at construction.
+                # For tkinter.Listbox, width/height in .place are in characters/rows.
+                if isinstance(preview_widget, (customtkinter.CTkButton, customtkinter.CTkEntry, customtkinter.CTkLabel, customtkinter.CTkComboBox, customtkinter.CTkFrame)):
+                    preview_widget.place(x=control_entry.x, y=control_entry.y)
+                elif isinstance(preview_widget, tkinter.Listbox):
+                    preview_widget.place(x=control_entry.x, y=control_entry.y, width=control_entry.width, height=control_entry.height) # Keep for Listbox
+                else: # Default fallback, might be for custom/other Tk widgets
+                    preview_widget.place(x=control_entry.x, y=control_entry.y, width=control_entry.width, height=control_entry.height)
+
+                # Bindings for selection and dragging
+                preview_widget.bind("<Button-1>", lambda e, widget=preview_widget, ctrl=control_entry: self.on_control_drag_start(e, widget, ctrl))
+                preview_widget.bind("<B1-Motion>", lambda e, widget=preview_widget, ctrl=control_entry: self.on_control_drag(e, widget, ctrl))
+                preview_widget.bind("<ButtonRelease-1>", lambda e, widget=preview_widget, ctrl=control_entry: self.on_control_drag_release(e, widget, ctrl))
+
                 self.preview_widgets[control_entry] = preview_widget
+
+    def on_control_drag_start(self, event, widget: Union[customtkinter.CTkBaseClass, tkinter.Listbox], control_entry: DialogControlEntry):
+        self.on_control_selected_on_preview(control_entry) # Select the control first
+
+        # Record initial properties for dragging
+        self._drag_data["widget"] = widget
+        self._drag_data["control_entry"] = control_entry
+        # Position of the widget itself on the canvas
+        self._drag_data["start_x_widget"] = control_entry.x
+        self._drag_data["start_y_widget"] = control_entry.y
+        # Mouse position relative to root window (for calculating delta)
+        self._drag_data["start_x_event_root"] = event.x_root
+        self._drag_data["start_y_event_root"] = event.y_root
+
+
+    def on_control_drag(self, event, widget: Union[customtkinter.CTkBaseClass, tkinter.Listbox], control_entry: DialogControlEntry):
+        if self._drag_data["widget"] is not widget: # Not dragging this widget
+            return
+
+        delta_x = event.x_root - self._drag_data["start_x_event_root"]
+        delta_y = event.y_root - self._drag_data["start_y_event_root"]
+
+        new_x = self._drag_data["start_x_widget"] + delta_x
+        new_y = self._drag_data["start_y_widget"] + delta_y
+
+        # Basic boundary check against canvas (0,0)
+        new_x = max(0, new_x)
+        new_y = max(0, new_y)
+        # Could add boundary check against canvas width/height if needed
+
+        control_entry.x = new_x
+        control_entry.y = new_y
+
+        # Update widget placement visually
+        if isinstance(widget, (customtkinter.CTkButton, customtkinter.CTkEntry, customtkinter.CTkLabel, customtkinter.CTkComboBox, customtkinter.CTkFrame)):
+            widget.place(x=new_x, y=new_y)
+        else: # Listbox or other
+            widget.place(x=new_x, y=new_y, width=control_entry.width, height=control_entry.height)
+
+
+        # Update properties pane if this control is selected
+        if self.selected_control_entry == control_entry:
+            if 'x' in self.prop_widgets_map: self.prop_widgets_map['x'].delete(0, tkinter.END); self.prop_widgets_map['x'].insert(0, str(new_x))
+            if 'y' in self.prop_widgets_map: self.prop_widgets_map['y'].delete(0, tkinter.END); self.prop_widgets_map['y'].insert(0, str(new_y))
+
+        if self.app_callbacks.get('set_dirty_callback'):
+            self.app_callbacks['set_dirty_callback'](True)
+
+
+    def on_control_drag_release(self, event, widget: Union[customtkinter.CTkBaseClass, tkinter.Listbox], control_entry: DialogControlEntry):
+        if self._drag_data["widget"] is widget: # Finalize drag for this widget
+            # Update the control_entry with the final position (already done in on_control_drag)
+            # control_entry.x = widget.winfo_x() # This might be slightly off due to place() behavior
+            # control_entry.y = widget.winfo_y()
+
+            # Reset drag data
+            self._drag_data["widget"] = None
+            self._drag_data["control_entry"] = None
+
+            # Persist changes and refresh UI if needed (already done by set_dirty and property update)
+            if self.app_callbacks.get('set_dirty_callback'):
+                self.app_callbacks['set_dirty_callback'](True)
+            # Re-render or update properties if something wasn't real-time
+            # self.display_control_properties(control_entry) # Could be called to ensure pane is perfectly synced
+
 
     def _populate_props_pane(self, target_obj: Union[DialogProperties, DialogControlEntry]):
         for widget in self.props_frame.winfo_children(): widget.destroy()
@@ -316,16 +405,55 @@ class DialogEditorFrame(customtkinter.CTkFrame):
 
 
     def on_add_control(self):
-        new_id = max([ctrl.id_val for ctrl in self.controls_copy if isinstance(ctrl.id_val, int)], default=1000) + 1 # Ensure unique numeric ID
-        # Default to a PUSHBUTTON as it's common and simple
-        new_control = DialogControlEntry(class_name="BUTTON", text="Button", id_val=new_id,
-                                         symbolic_id_name=f"IDC_BUTTON{new_id}",
-                                         x=10, y=10, width=50, height=14,
-                                         style=BS_PUSHBUTTON|WS_VISIBLE|WS_CHILD|WS_TABSTOP)
-        self.controls_copy.append(new_control)
-        self.render_dialog_preview()
-        if self.app_callbacks.get('set_dirty_callback'): self.app_callbacks['set_dirty_callback'](True)
-        self.on_control_selected_on_preview(new_control)
+        control_types = { # Display Name: (class_name_val, default_text, default_style_val, default_width, default_height)
+            "Button (Push)": ("BUTTON", "Button", BS_PUSHBUTTON | WS_VISIBLE | WS_CHILD | WS_TABSTOP, 50, 14),
+            "Edit Control": ("EDIT", "", ES_LEFT | WS_BORDER | WS_VISIBLE | WS_CHILD | WS_TABSTOP, 100, 14), # ES_LEFT is 0
+            "Static Text": ("STATIC", "Static Text", WS_VISIBLE | WS_CHILD | WS_GROUP, 100, 14), # SS_LEFT is 0
+            "List Box": ("LISTBOX", "", LBS_STANDARD | WS_VISIBLE | WS_CHILD | WS_TABSTOP, 100, 50), # LBS_STANDARD includes border, vscroll
+            "Combo Box": ("COMBOBOX", "", CBS_DROPDOWNLIST | WS_VISIBLE | WS_CHILD | WS_TABSTOP | WS_VSCROLL, 100, 14), # CBS_DROPDOWNLIST common
+            "Group Box": ("BUTTON", "Group", BS_GROUPBOX | WS_VISIBLE | WS_CHILD, 100, 50),
+            "Scrollbar": ("SCROLLBAR", "", SBS_HORZ | WS_VISIBLE | WS_CHILD, 100, 10), # SBS_HORZ=0
+            # Common Controls (using string class names)
+            "SysListView32": (WC_LISTVIEW, "ListView", WS_VISIBLE | WS_CHILD | WS_BORDER | LVS_REPORT, 150, 80), # LVS_REPORT=1
+            "SysTreeView32": (WC_TREEVIEW, "TreeView", WS_VISIBLE | WS_CHILD | WS_BORDER | TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS, 150, 80),
+        }
+        # TODO: Add more styles from dialog_parser_util as needed (e.g. ES_LEFT, CBS_DROPDOWNLIST, LVS_REPORT etc.)
+        # For now, using some common combinations. ES_LEFT, SS_LEFT, SBS_HORZ are often 0.
+
+        dialog = customtkinter.CTkInputDialog(text="Enter control type:", title="Add Control",
+                                             button_text="Next",
+                                             # This InputDialog doesn't support combobox directly.
+                                             # We'll ask for text and validate. A custom dialog would be better for fixed choices.
+                                             # For now, let's list the options in the prompt.
+                                             )
+        # Hacky way to show options with CTkInputDialog:
+        # This is not ideal. A proper CTkToplevel with a Combobox is better.
+        # For this exercise, let's simplify and use a predefined list and ask for one by name via simpledialog.
+
+        choices = list(control_types.keys())
+        choice_str = simpledialog.askstring("Add Control", "Choose control type:\n\n" + "\n".join(choices), parent=self)
+
+        if choice_str and choice_str in control_types:
+            class_name_val, def_text, def_style, def_w, def_h = control_types[choice_str]
+
+            new_id = max([ctrl.id_val for ctrl in self.controls_copy if isinstance(ctrl.id_val, int)], default=1000) + 1
+            # Create a somewhat unique symbolic ID if possible
+            base_symbolic_name = class_name_val if isinstance(class_name_val, str) else ATOM_TO_CLASSNAME_MAP.get(class_name_val, "CONTROL")
+            symbolic_id_name = f"IDC_{base_symbolic_name.upper()}{new_id}"
+
+            new_control = DialogControlEntry(
+                class_name=class_name_val, text=def_text, id_val=new_id,
+                symbolic_id_name=symbolic_id_name,
+                x=10, y=10, width=def_w, height=def_h,
+                style=def_style
+            )
+            self.controls_copy.append(new_control)
+            self.render_dialog_preview()
+            if self.app_callbacks.get('set_dirty_callback'): self.app_callbacks['set_dirty_callback'](True)
+            self.on_control_selected_on_preview(new_control) # Select the new control
+        elif choice_str: # User entered something not in the list
+             messagebox.showerror("Invalid Type", f"Control type '{choice_str}' is not recognized.", parent=self)
+
 
     def on_delete_control(self):
         if self.selected_control_entry:

@@ -184,11 +184,23 @@ class DialogResource(Resource): # Unchanged from previous full file overwrite
                     if not actual_size_bytes or len(actual_size_bytes) < 4: raise EOFError(f"Incomplete ext creation data size for ctrl #{i+1}.")
                     creation_data_size = struct.unpack('<L', actual_size_bytes)[0]
 
+                # Safeguard against reading beyond EOF if creation_data_size is erroneous
+                current_stream_pos = stream.tell()
+                if current_stream_pos + creation_data_size > len(raw_data):
+                    print(f"Warning: creation_data_size ({creation_data_size}) for ctrl #{i+1} at offset {current_stream_pos} would overflow buffer (size {len(raw_data)}). Adjusting to {len(raw_data) - current_stream_pos}.")
+                    creation_data_size = len(raw_data) - current_stream_pos
+                    if creation_data_size < 0: creation_data_size = 0 # Should not happen but as a fallback
+
                 if creation_data_size > 0:
                     control_creation_data = stream.read(creation_data_size)
                     if len(control_creation_data) < creation_data_size:
-                        print(f"Warning: Incomplete creation data for ctrl #{i+1}. Expected {creation_data_size}, got {len(control_creation_data)}.")
-                        # Keep what was read, or set to None if critical? For now, keep partial.
+                        # This warning is now more about an unexpected short read after adjustment,
+                        # or if the original size was already short but validly within buffer.
+                        print(f"Warning: Short read for creation data for ctrl #{i+1}. Expected {creation_data_size}, got {len(control_creation_data)} (stream pos: {stream.tell()}).")
+                        # Keep what was read.
+                elif creation_data_size == 0: # Explicitly handle 0 size after potential adjustment
+                    control_creation_data = b''
+
 
                 ctrl = DialogControlEntry(class_name=class_name_str_ctrl, text=text_str_ctrl, id_val=id_ctrl,
                                           x=x_ctrl, y=y_ctrl, width=w_ctrl, height=h_ctrl,

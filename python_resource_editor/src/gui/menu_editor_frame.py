@@ -60,6 +60,8 @@ class MenuEditorFrame(customtkinter.CTkFrame):
         customtkinter.CTkButton(action_button_frame, text="Delete", command=self.on_delete_selected).pack(side="left", padx=2)
         customtkinter.CTkButton(action_button_frame, text="Move Up", command=lambda: self.on_move_item(-1)).pack(side="left", padx=2)
         customtkinter.CTkButton(action_button_frame, text="Move Down", command=lambda: self.on_move_item(1)).pack(side="left", padx=2)
+        customtkinter.CTkButton(action_button_frame, text="Show Menu Preview", command=self.show_menu_preview).pack(side="left", padx=10)
+
 
         # --- Apply All Button (Spanning bottom) ---
         self.apply_all_button = customtkinter.CTkButton(self, text="Apply All Changes to Resource", command=self.apply_all_changes_to_resource)
@@ -140,6 +142,8 @@ class MenuEditorFrame(customtkinter.CTkFrame):
         if not self.selected_menu_entry: return
 
         item = self.selected_menu_entry
+        # Ensure string flags are up-to-date before populating UI from them
+        item.update_string_flags_from_numeric()
 
         # --- Populate Properties Pane using .grid ---
         self.props_frame.grid_columnconfigure(0, weight=0) # Labels
@@ -205,16 +209,16 @@ class MenuEditorFrame(customtkinter.CTkFrame):
         if item.is_ex:
             customtkinter.CTkLabel(self.props_frame, text="Type Numeric (MFT_):").grid(row=current_row, column=0, sticky="w", padx=5, pady=2)
             type_num_entry = customtkinter.CTkEntry(self.props_frame)
-            type_num_entry.insert(0, f"0x{item.type_numeric:08X}") # Display from item's direct field
+            type_num_entry.insert(0, f"0x{item.type_numeric:08X}")
             type_num_entry.grid(row=current_row, column=1, sticky="ew", padx=5, pady=(0,5))
-            self.prop_widgets['type_numeric_hex'] = type_num_entry # Changed key for clarity
+            self.prop_widgets['type_numeric_hex'] = type_num_entry
             current_row += 1
 
             customtkinter.CTkLabel(self.props_frame, text="State Numeric (MFS_):").grid(row=current_row, column=0, sticky="w", padx=5, pady=2)
             state_num_entry = customtkinter.CTkEntry(self.props_frame)
-            state_num_entry.insert(0, f"0x{item.state_numeric:08X}") # Display from item's direct field
+            state_num_entry.insert(0, f"0x{item.state_numeric:08X}")
             state_num_entry.grid(row=current_row, column=1, sticky="ew", padx=5, pady=(0,5))
-            self.prop_widgets['state_numeric_hex'] = state_num_entry # Changed key for clarity
+            self.prop_widgets['state_numeric_hex'] = state_num_entry
             current_row += 1
 
             customtkinter.CTkLabel(self.props_frame, text="Help ID:").grid(row=current_row, column=0, sticky="w", padx=5, pady=2)
@@ -226,9 +230,10 @@ class MenuEditorFrame(customtkinter.CTkFrame):
         elif item.item_type_str != "SEPARATOR": # Standard Menu, show combined flags_numeric
             customtkinter.CTkLabel(self.props_frame, text="Flags Numeric (MF_):").grid(row=current_row, column=0, sticky="w", padx=5, pady=2)
             flags_num_entry = customtkinter.CTkEntry(self.props_frame)
-            flags_num_entry.insert(0, f"0x{item.flags_numeric:04X}") # Display from item's direct field
+            # For standard menus, all flags are in type_numeric as per MenuItemEntry internal logic
+            flags_num_entry.insert(0, f"0x{item.type_numeric:04X}")
             flags_num_entry.grid(row=current_row, column=1, sticky="ew", padx=5, pady=(0,5))
-            self.prop_widgets['flags_numeric_hex'] = flags_num_entry # Changed key for clarity
+            self.prop_widgets['flags_numeric_hex'] = flags_num_entry
             current_row += 1
 
         apply_props_button = customtkinter.CTkButton(self.props_frame, text="Apply Item Changes", command=self.apply_item_changes)
@@ -324,30 +329,45 @@ class MenuEditorFrame(customtkinter.CTkFrame):
         if 'flags' in self.prop_widgets: # Check if flags frame was populated
             for flag_name_key, cb_widget in self.prop_widgets['flags'].items():
                 if cb_widget.get() == 1:
-                    item.flags_list.append(flag_name_key)
+                    item.flags_list.append(flag_name_key) # item.flags_list is actually item.flags in MenuItemEntry
 
-        # Update numeric fields from hex entries
-        # Then, call a method on MenuItemEntry to reconcile numeric fields from its flags_list.
+        # After updating flags_list from checkboxes, update numeric representations
+        item.update_numeric_flags_from_strings()
+
+        # Update numeric fields if they were edited by user, then update string flags from them
+        # This ensures consistency if user edits hex fields.
+        user_edited_numeric = False
         if item.is_ex:
             try:
-                # User might edit these directly, these take precedence if filled
-                if 'type_numeric_hex' in self.prop_widgets: # Check presence before accessing
-                    item.type_numeric = int(self.prop_widgets['type_numeric_hex'].get(), 0)
+                if 'type_numeric_hex' in self.prop_widgets:
+                    new_type_numeric = int(self.prop_widgets['type_numeric_hex'].get(), 0)
+                    if new_type_numeric != item.type_numeric: item.type_numeric = new_type_numeric; user_edited_numeric = True
                 if 'state_numeric_hex' in self.prop_widgets:
-                    item.state_numeric = int(self.prop_widgets['state_numeric_hex'].get(), 0)
+                    new_state_numeric = int(self.prop_widgets['state_numeric_hex'].get(), 0)
+                    if new_state_numeric != item.state_numeric: item.state_numeric = new_state_numeric; user_edited_numeric = True
                 if 'help_id' in self.prop_widgets:
                     help_id_str = self.prop_widgets['help_id'].get().strip()
-                    item.help_id = int(help_id_str) if help_id_str.isdigit() else (item.help_id or 0)
+                    new_help_id = int(help_id_str) if help_id_str.isdigit() else (item.help_id or 0)
+                    if new_help_id != item.help_id: item.help_id = new_help_id # No need to set user_edited_numeric for help_id alone for flag sync
             except ValueError:
                 messagebox.showerror("Error", "MENUEX Numeric Type/State/Help ID must be valid hex/decimal numbers.", parent=self)
                 return
         elif item.item_type_str != "SEPARATOR": # Standard menu
             try:
-                if 'flags_numeric_hex' in self.prop_widgets: # Check presence
-                    item.flags_numeric = int(self.prop_widgets['flags_numeric_hex'].get(), 0)
+                if 'flags_numeric_hex' in self.prop_widgets:
+                     # For standard menus, flags_numeric effectively maps to item.type_numeric
+                    new_flags_numeric = int(self.prop_widgets['flags_numeric_hex'].get(), 0)
+                    if new_flags_numeric != item.type_numeric: item.type_numeric = new_flags_numeric; user_edited_numeric = True
             except ValueError:
                 messagebox.showerror("Error", "Standard Flags Numeric must be a valid hex/decimal number.", parent=self)
                 return
+
+        if user_edited_numeric: # If numeric hex fields were changed by user
+            item.update_string_flags_from_numeric() # Update string flags list from these new numeric values
+            # This will make get_flags_display_list (used by tree) and checkbox population (if pane is re-rendered) consistent.
+            # Also, call update_numeric_flags_from_strings again to ensure item_type (POPUP/SEPARATOR) is consistent if numeric change implied it.
+            item.update_numeric_flags_from_strings()
+
 
         self.populate_menu_tree()
         if self.selected_tree_item_id and self.menu_tree.exists(self.selected_tree_item_id):
@@ -360,10 +380,94 @@ class MenuEditorFrame(customtkinter.CTkFrame):
 
     def apply_all_changes_to_resource(self):
         self.menu_resource.items = copy.deepcopy(self.menu_items) # Apply all local changes back
+        self.menu_resource.is_ex = self.is_ex # Ensure is_ex status is also copied
         self.menu_resource.dirty = True
         if self.app_callbacks.get('set_dirty_callback'):
             self.app_callbacks['set_dirty_callback'](True)
         messagebox.showinfo("Changes Applied", "All menu changes applied to in-memory resource. Save file to persist.", parent=self)
+
+    def _on_preview_menu_item_click(self, menu_item_entry: MenuItemEntry):
+        """ Placeholder action when a previewed menu item is clicked. """
+        messagebox.showinfo("Menu Item Clicked (Preview)",
+                            f"Text: '{menu_item_entry.text}'\n"
+                            f"ID: {menu_item_entry.get_id_display()}\n"
+                            f"Flags: {', '.join(menu_item_entry.get_flags_display_list())}",
+                            parent=self) # Parent to ensure it's on top of the preview window if possible
+
+    def show_menu_preview(self):
+        """Creates and shows a Toplevel window with a tkinter.Menu preview."""
+        preview_window = customtkinter.CTkToplevel(self)
+        preview_window.title(f"Preview: {self.menu_resource.identifier.name_id_to_str()}")
+        preview_window.geometry("400x50") # Initial size, will be overridden by menu usually
+
+        menubar = tkinter.Menu(preview_window)
+
+        # Helper to recursively populate the tkinter.Menu
+        def _populate_tkinter_menu_recursive(tk_menu_parent, item_list: List[MenuItemEntry]):
+            for item_entry in item_list:
+                flags_as_strings = item_entry.get_flags_display_list() # Use existing method to get flags
+
+                if item_entry.item_type == "SEPARATOR":
+                    tk_menu_parent.add_separator()
+                elif item_entry.item_type == "POPUP":
+                    submenu = tkinter.Menu(tk_menu_parent, tearoff=0)
+                    _populate_tkinter_menu_recursive(submenu, item_entry.children)
+                    tk_menu_parent.add_cascade(label=item_entry.text, menu=submenu)
+
+                    # Check if the POPUP itself should be disabled
+                    if "GRAYED" in flags_as_strings or "INACTIVE" in flags_as_strings:
+                        # Get the index of the last added item (the cascade)
+                        last_index = tk_menu_parent.index(tkinter.END)
+                        if last_index is not None: # Should always be an index
+                           tk_menu_parent.entryconfigure(last_index, state="disabled")
+                else: # Regular MENUITEM
+                    item_label = item_entry.text
+                    is_checked = "CHECKED" in flags_as_strings
+
+                    # For checkbutton type items
+                    if is_checked: # Simplified: if CHECKED flag, make it a checkbutton
+                        # We need a variable for checkbuttons to work, but for a static preview,
+                        # we can't easily store these. So, we just show its checked state.
+                        # A real checkbutton would need a tkinter.BooleanVar().
+                        # For preview, we can simulate by adding (Checked) or using add_checkbutton if state can be static.
+                        # tk_menu_parent.add_checkbutton(label=item_label, command=lambda i=item_entry: self._on_preview_menu_item_click(i))
+                        # tk_menu_parent.invoke(tk_menu_parent.index(tkinter.END)) # this would check it, but needs var
+                        # Simplification: just add command, visual state handled by entryconfigure if possible
+                        tk_menu_parent.add_command(label=item_label, command=lambda i=item_entry: self._on_preview_menu_item_click(i))
+
+                    else: # Normal command
+                        tk_menu_parent.add_command(label=item_label, command=lambda i=item_entry: self._on_preview_menu_item_click(i))
+
+                    # Apply disabled state if GRAYED or INACTIVE
+                    if "GRAYED" in flags_as_strings or "INACTIVE" in flags_as_strings:
+                        last_index = tk_menu_parent.index(tkinter.END)
+                        if last_index is not None:
+                           tk_menu_parent.entryconfigure(last_index, state="disabled")
+
+        # Populate the main menubar (which itself is a menu)
+        # If the top-level items are meant to be cascades (like "File", "Edit" on a main window bar)
+        # or direct commands depends on menu structure. Assuming here the first level of self.menu_items
+        # are the menus to show on the bar (e.g. "File", "Edit" are POPUPs).
+        # If the menu_items represent a single popup menu, this needs adjustment.
+        # For typical resource menus, self.menu_items IS the list for one popup.
+        # So, we might want to wrap it in a dummy "Preview" cascade if it's not already a series of popups.
+
+        if self.menu_items and all(item.item_type == "POPUP" for item in self.menu_items):
+            # This structure is like a main window menu bar (File, Edit, Help are all POPUPs)
+             _populate_tkinter_menu_recursive(menubar, self.menu_items)
+        elif self.menu_items:
+             # This structure is like a single context menu or a submenu
+             # Create a single cascade entry on the menubar to host this list
+            single_menu_host = tkinter.Menu(menubar, tearoff=0)
+            _populate_tkinter_menu_recursive(single_menu_host, self.menu_items)
+            menubar.add_cascade(label=self.menu_resource.identifier.name_id_to_str() or "Menu", menu=single_menu_host)
+        else:
+            menubar.add_command(label="(Empty Menu)", state="disabled")
+
+
+        preview_window.config(menu=menubar)
+        preview_window.transient(self) # Keep it on top of the main window
+        preview_window.grab_set()      # Modal behavior
 
 
 if __name__ == '__main__':

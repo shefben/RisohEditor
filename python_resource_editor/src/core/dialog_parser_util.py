@@ -307,7 +307,25 @@ def _read_unicode_string_align(stream: io.BytesIO) -> str:
         chars.append(char_bytes.decode('utf-16-le', errors='replace'))
     current_pos = stream.tell()
     padding = (4 - (current_pos % 4)) % 4
-    if padding > 0: stream.read(padding)
+    if padding > 0:
+        # Check if enough bytes are available for padding.
+        # This assumes 'stream' is an io.BytesIO object, which is typical in this context.
+        if hasattr(stream, 'getbuffer'):
+            total_len = stream.getbuffer().nbytes
+            if current_pos + padding > total_len:
+                # Not enough data for full padding. Read only what's available.
+                # This might happen with malformed resources.
+                padding_to_read = total_len - current_pos
+                if padding_to_read > 0:
+                    stream.read(padding_to_read)
+                # Optional: Log a warning if strict parsing is needed.
+                # print(f"Warning: Stream ended before full DWORD alignment padding could be read in _read_unicode_string_align. Read {padding_to_read} of {padding} bytes.")
+            else:
+                stream.read(padding) # Enough data, read full padding
+        else:
+            # Fallback for other stream types if getbuffer is not available.
+            # This might still raise EOFError if the stream is too short and doesn't support such checks.
+            stream.read(padding)
     return "".join(chars)
 
 def _read_word_or_string_align(stream: io.BytesIO) -> Tuple[Union[int, str, None], bool]:
