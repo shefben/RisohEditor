@@ -150,41 +150,105 @@ class DialogResource(Resource): # Unchanged from previous full file overwrite
             class_val, _ = _read_word_or_string_align(stream); props.class_name = class_val if class_val not in ["", 0] else None
             if isinstance(class_val, str) and class_val != "": props.symbolic_class_name = class_val
             props.caption = _read_unicode_string_align(stream)
-            if props.style & (DS_SETFONT | DS_SHELLFONT) and c_dlg_items >= 0:
-                font_info_bytes = stream.read(2)
-                if not font_info_bytes or len(font_info_bytes) < 2: raise EOFError("Incomplete Font Pointsize.")
-                props.font_size = struct.unpack('<H', font_info_bytes)[0]
-                if props.is_ex:
-                    font_extra_bytes = stream.read(4)
-                    if not font_extra_bytes or len(font_extra_bytes) < 4 : raise EOFError("Incomplete DIALOGEX Font extra data.")
-                    props.font_weight, props.font_italic_byte, props.font_charset = struct.unpack('<HBB', font_extra_bytes); props.font_italic = bool(props.font_italic_byte)
-                props.font_name = _read_unicode_string_align(stream)
+
+            if props.style & (DS_SETFONT | DS_SHELLFONT) and c_dlg_items >= 0: # c_dlg_items check seems unusual here, but keeping original logic
+                current_field = "Font PointSize"
+                try:
+                    font_info_bytes = stream.read(2)
+                    if not font_info_bytes or len(font_info_bytes) < 2: raise EOFError(f"Incomplete {current_field} data.")
+                    props.font_size = struct.unpack('<H', font_info_bytes)[0]
+
+                    if props.is_ex:
+                        current_field = "DIALOGEX Font extra data (Weight, Italic, Charset)"
+                        font_extra_bytes = stream.read(4)
+                        if not font_extra_bytes or len(font_extra_bytes) < 4 : raise EOFError(f"Incomplete {current_field}.")
+                        props.font_weight, props.font_italic_byte, props.font_charset = struct.unpack('<HBB', font_extra_bytes); props.font_italic = bool(props.font_italic_byte)
+
+                    current_field = "Font Name"
+                    props.font_name = _read_unicode_string_align(stream) # This helper handles its own alignment and EOF potential
+                except EOFError as e_font:
+                    print(f"EOFError parsing dialog '{identifier.name_id}' while reading {current_field} at offset {stream.tell()}: {e_font}")
+                    # Decide if parsing should stop or continue with missing font info
+                    # For now, let it continue, props will have partial/default font info.
+                    # If c_dlg_items is 0, this might be acceptable. If >0, subsequent reads will likely fail.
+                    if i < c_dlg_items : raise # Re-raise if controls are expected, as stream is likely corrupt
+
             for i in range(c_dlg_items):
-                stream.seek((stream.tell() + 3) & ~3)
-                if stream.tell() >= len(raw_data): print(f"Warning: Expected {c_dlg_items} controls, but found EOF before control #{i+1}"); break
-                item_is_ex = props.is_ex ; help_id_ctrl, ex_style_ctrl, style_ctrl, x_ctrl, y_ctrl, w_ctrl, h_ctrl, id_ctrl = (0,0,0,0,0,0,0,0)
-                if item_is_ex:
-                    item_hdr_fmt = '<LLLhhhhL'; item_hdr_size = struct.calcsize(item_hdr_fmt); item_header_data = stream.read(item_hdr_size)
-                    if len(item_header_data) < item_hdr_size: raise EOFError(f"Incomplete DLGITEMTEMPLATEEX for ctrl #{i+1}.")
-                    help_id_ctrl, ex_style_ctrl, style_ctrl, x_ctrl, y_ctrl, w_ctrl, h_ctrl, id_ctrl = struct.unpack(item_hdr_fmt, item_header_data)
-                else:
-                    item_hdr_fmt = '<LLhhhhH'; item_hdr_size = struct.calcsize(item_hdr_fmt); item_header_data = stream.read(item_hdr_size)
-                    if len(item_header_data) < item_hdr_size: raise EOFError(f"Incomplete DLGITEMTEMPLATE for ctrl #{i+1}.")
-                    style_ctrl, ex_style_ctrl, x_ctrl, y_ctrl, w_ctrl, h_ctrl, id_ctrl_word = struct.unpack(item_hdr_fmt, item_header_data); id_ctrl = id_ctrl_word
-                class_val_ctrl, _ = _read_word_or_string_align(stream); text_val_ctrl, _ = _read_word_or_string_align(stream)
+                current_field = f"ctrl #{i+1} alignment"
+                try:
+                    # Ensure stream is DWORD aligned before reading each DLGITEMTEMPLATE(EX)
+                    align_pos = (stream.tell() + 3) & ~3
+                    if align_pos > len(raw_data): # Check if alignment would read past EOF
+                        raise EOFError(f"Alignment seek for control #{i+1} would go past EOF (current: {stream.tell()}, align_to: {align_pos}, total: {len(raw_data)}).")
+                    if stream.tell() < align_pos : # Only seek if not already aligned or past desired point
+                         stream.seek(align_pos)
+
+                    if stream.tell() >= len(raw_data): # Check after alignment before reading item header
+                        print(f"Warning: Expected {c_dlg_items} controls, but found EOF at offset {stream.tell()} before reading header of control #{i+1}")
+                        break # Stop processing controls
+
+                    item_is_ex = props.is_ex
+                    help_id_ctrl, ex_style_ctrl, style_ctrl, x_ctrl, y_ctrl, w_ctrl, h_ctrl, id_ctrl = (0,0,0,0,0,0,0,0)
+
+                    current_field = f"DLGITEMTEMPLATEEX header for ctrl #{i+1}" if item_is_ex else f"DLGITEMTEMPLATE header for ctrl #{i+1}"
+                    if item_is_ex:
+                        item_hdr_fmt = '<LLLhhhhL'; item_hdr_size = struct.calcsize(item_hdr_fmt)
+                        item_header_data = stream.read(item_hdr_size)
+                        if len(item_header_data) < item_hdr_size: raise EOFError(f"Incomplete data for {current_field} (expected {item_hdr_size}, got {len(item_header_data)}).")
+                        help_id_ctrl, ex_style_ctrl, style_ctrl, x_ctrl, y_ctrl, w_ctrl, h_ctrl, id_ctrl = struct.unpack(item_hdr_fmt, item_header_data)
+                    else:
+                        item_hdr_fmt = '<LLhhhhH'; item_hdr_size = struct.calcsize(item_hdr_fmt)
+                        item_header_data = stream.read(item_hdr_size)
+                        if len(item_header_data) < item_hdr_size: raise EOFError(f"Incomplete data for {current_field} (expected {item_hdr_size}, got {len(item_header_data)}).")
+                        style_ctrl, ex_style_ctrl, x_ctrl, y_ctrl, w_ctrl, h_ctrl, id_ctrl_word = struct.unpack(item_hdr_fmt, item_header_data); id_ctrl = id_ctrl_word
+
+                    current_field = f"ctrl #{i+1} class string/ordinal"
+                    class_val_ctrl, _ = _read_word_or_string_align(stream) # Helper handles its own alignment and EOF checks
+                    current_field = f"ctrl #{i+1} text string/ordinal"
+                    text_val_ctrl, _ = _read_word_or_string_align(stream)   # Helper handles its own alignment and EOF checks
+
+                except EOFError as e_item_hdr:
+                    print(f"EOFError parsing dialog '{identifier.name_id}' while reading {current_field} at offset {stream.tell()}: {e_item_hdr}")
+                    break # Stop processing controls if header or pre-data is corrupt/missing
+
+                # Continue reading post-header fields for this control, but inside the loop's try-except
+                # This is because _read_word_or_string_align might return (None, False) on EOF instead of raising,
+                # so we check class_val_ctrl and text_val_ctrl.
+                if class_val_ctrl is None : # Indicates EOF from helper
+                    print(f"Warning: EOF or short read encountered for class of control #{i+1} in dialog '{identifier.name_id}' at offset {stream.tell()}.")
+                    break
+                if text_val_ctrl is None : # Indicates EOF from helper
+                    print(f"Warning: EOF or short read encountered for text of control #{i+1} in dialog '{identifier.name_id}' at offset {stream.tell()}.")
+                    break
+
+                class_name_str_ctrl = str(class_val_ctrl);
                 class_name_str_ctrl = str(class_val_ctrl);
                 if isinstance(class_val_ctrl, int): class_name_str_ctrl = ATOM_TO_CLASSNAME_MAP.get(class_val_ctrl, f"0x{class_val_ctrl:04X}")
                 text_str_ctrl = str(text_val_ctrl) if isinstance(text_val_ctrl, str) else ""
-                creation_data_size_bytes = stream.read(2)
-                if not creation_data_size_bytes or len(creation_data_size_bytes) < 2: raise EOFError(f"Incomplete creation data size for ctrl #{i+1}.")
-                creation_data_size = struct.unpack('<H', creation_data_size_bytes)[0]
-                control_creation_data: Optional[bytes] = None
-                if item_is_ex and creation_data_size == 0xFFFF: # Special case for DIALOGEX items
-                    actual_size_bytes = stream.read(4)
-                    if not actual_size_bytes or len(actual_size_bytes) < 4: raise EOFError(f"Incomplete ext creation data size for ctrl #{i+1}.")
-                    creation_data_size = struct.unpack('<L', actual_size_bytes)[0]
+                if isinstance(class_val_ctrl, int): class_name_str_ctrl = ATOM_TO_CLASSNAME_MAP.get(class_val_ctrl, f"0x{class_val_ctrl:04X}")
+                text_str_ctrl = str(text_val_ctrl) if isinstance(text_val_ctrl, str) else ""
 
-                # Safeguard against reading beyond EOF if creation_data_size is erroneous
+                control_creation_data: Optional[bytes] = b'' # Default to empty bytes
+                creation_data_size = 0
+                current_field = f"ctrl #{i+1} creation data size (WORD)"
+                try:
+                    creation_data_size_bytes = stream.read(2)
+                    if not creation_data_size_bytes or len(creation_data_size_bytes) < 2:
+                        raise EOFError(f"Incomplete {current_field} (expected 2, got {len(creation_data_size_bytes if creation_data_size_bytes else b'')}).")
+                    creation_data_size = struct.unpack('<H', creation_data_size_bytes)[0]
+
+                    if item_is_ex and creation_data_size == 0xFFFF: # DIALOGEX: 0xFFFF means size is in next DWORD
+                        current_field = f"ctrl #{i+1} extended creation data size (DWORD)"
+                        actual_size_bytes = stream.read(4)
+                        if not actual_size_bytes or len(actual_size_bytes) < 4:
+                            raise EOFError(f"Incomplete {current_field} (expected 4, got {len(actual_size_bytes if actual_size_bytes else b'')}).")
+                        creation_data_size = struct.unpack('<L', actual_size_bytes)[0]
+                except EOFError as e_cd_size:
+                    print(f"EOFError parsing dialog '{identifier.name_id}' while reading {current_field} at offset {stream.tell()}: {e_cd_size}")
+                    break # Stop processing controls if creation data size is missing
+
+                # Safeguard against reading beyond EOF if creation_data_size is erroneous,
+                # including if it was adjusted to 0 from a previous error but loop continues.
                 current_stream_pos = stream.tell()
                 if current_stream_pos + creation_data_size > len(raw_data):
                     print(f"Warning: creation_data_size ({creation_data_size}) for ctrl #{i+1} at offset {current_stream_pos} would overflow buffer (size {len(raw_data)}). Adjusting to {len(raw_data) - current_stream_pos}.")
@@ -209,10 +273,28 @@ class DialogResource(Resource): # Unchanged from previous full file overwrite
                                           symbolic_id_name=str(id_ctrl) if isinstance(id_ctrl, str) else None,
                                           creation_data=control_creation_data) # Pass it here
                 controls_list.append(ctrl)
-        except EOFError as e: print(f"EOFError parsing dialog '{identifier.name_id}': {e}.")
-        except struct.error as e: print(f"Struct error parsing dialog '{identifier.name_id}': {e}.")
-        except Exception as e: print(f"Unexpected error parsing dialog '{identifier.name_id}': {e}"); import traceback; traceback.print_exc()
-        if 'props' not in locals() or props is None : props = DialogProperties(name=identifier.name_id, caption=f"Dialog (Parse Fail)")
+        except EOFError as e:
+            err_msg = f"EOFError parsing dialog {repr(identifier.name_id_to_str())}"
+            if 'current_field' in locals() and current_field: # Add field context if available
+                err_msg += f" while processing field: {repr(current_field)}"
+            err_msg += f" at stream offset {stream.tell() if stream else 'N/A'}: {repr(e)}"
+            print(err_msg)
+        except struct.error as e:
+            err_msg = f"Struct error parsing dialog {repr(identifier.name_id_to_str())}"
+            if 'current_field' in locals() and current_field:
+                err_msg += f" (field hint: {repr(current_field)})"
+            err_msg += f" at stream offset {stream.tell() if stream else 'N/A'}: {repr(e)}"
+            print(err_msg)
+        except Exception as e:
+            err_msg = f"Unexpected error parsing dialog {repr(identifier.name_id_to_str())}"
+            if 'current_field' in locals() and current_field:
+                 err_msg += f" (field hint: {repr(current_field)})"
+            err_msg += f" at stream offset {stream.tell() if stream else 'N/A'}: {repr(e)}"
+            print(err_msg)
+            import traceback; traceback.print_exc()
+
+        if 'props' not in locals() or props is None : # Ensure props exists, even if parsing failed early
+            props = DialogProperties(name=identifier.name_id, caption=f"Dialog (Parse Fail for {repr(identifier.name_id_to_str())})")
         return cls(identifier, properties=props, controls=controls_list)
     def to_rc_text(self) -> str: return generate_dialog_rc_text(self.properties, self.controls, self.identifier.language_id)
 

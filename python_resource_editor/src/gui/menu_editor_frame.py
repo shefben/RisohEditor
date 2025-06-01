@@ -17,15 +17,21 @@ class MenuEditorFrame(customtkinter.CTkFrame):
         self.menu_items: List[MenuItemEntry] = copy.deepcopy(menu_resource.items)
         self.is_ex = menu_resource.is_ex # Store if it's a MENUEX
 
-        self.grid_columnconfigure(0, weight=1) # Tree
-        self.grid_columnconfigure(1, weight=1) # Properties
-        self.grid_rowconfigure(0, weight=1) # Tree and Properties
-        self.grid_rowconfigure(1, weight=0) # Action buttons
-        self.grid_rowconfigure(2, weight=0) # Apply All button
+        self.grid_columnconfigure(0, weight=1) # Left pane (Tree + Actions)
+        self.grid_columnconfigure(1, weight=1) # Right pane (Properties)
+        self.grid_rowconfigure(0, weight=0) # Interactive Menu Bar
+        self.grid_rowconfigure(1, weight=1) # Tree and Properties
+        self.grid_rowconfigure(2, weight=0) # Action buttons
+        self.grid_rowconfigure(3, weight=0) # Apply All button
 
-        # --- Menu Tree (Left Pane) ---
+        # --- Interactive Menu Bar (Top, Spanning Both Columns) ---
+        self.interactive_menu_bar_frame = customtkinter.CTkFrame(self, height=30, fg_color="transparent")
+        self.interactive_menu_bar_frame.grid(row=0, column=0, columnspan=2, padx=5, pady=(5,0), sticky="new")
+        # Menubuttons will be added here by render_interactive_menu_bar
+
+        # --- Menu Tree (Left Pane, Below Interactive Menu Bar) ---
         self.tree_frame = customtkinter.CTkFrame(self)
-        self.tree_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+        self.tree_frame.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
         self.tree_frame.grid_rowconfigure(0, weight=1)
         self.tree_frame.grid_columnconfigure(0, weight=1)
 
@@ -44,15 +50,14 @@ class MenuEditorFrame(customtkinter.CTkFrame):
         self.menu_tree.configure(yscrollcommand=tree_scroll_y.set)
 
 
-        # --- Properties Pane (Right Pane) ---
+        # --- Properties Pane (Right Pane, Below Interactive Menu Bar) ---
         self.props_frame = customtkinter.CTkFrame(self, fg_color="transparent")
-        self.props_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
+        self.props_frame.grid(row=1, column=1, padx=5, pady=5, sticky="nsew")
         # Properties will be populated on selection
 
         # --- Action Buttons (Below Tree) ---
         action_button_frame = customtkinter.CTkFrame(self, fg_color="transparent")
-        action_button_frame.grid(row=1, column=0, pady=5, sticky="ew")
-        # action_button_frame.grid_columnconfigure((0,1,2,3,4), weight=1) # Distribute buttons
+        action_button_frame.grid(row=2, column=0, pady=5, sticky="ew") # Adjusted row
 
         customtkinter.CTkButton(action_button_frame, text="Add Item", command=self.on_add_item).pack(side="left", padx=2)
         customtkinter.CTkButton(action_button_frame, text="Add Popup", command=self.on_add_popup).pack(side="left", padx=2)
@@ -60,19 +65,32 @@ class MenuEditorFrame(customtkinter.CTkFrame):
         customtkinter.CTkButton(action_button_frame, text="Delete", command=self.on_delete_selected).pack(side="left", padx=2)
         customtkinter.CTkButton(action_button_frame, text="Move Up", command=lambda: self.on_move_item(-1)).pack(side="left", padx=2)
         customtkinter.CTkButton(action_button_frame, text="Move Down", command=lambda: self.on_move_item(1)).pack(side="left", padx=2)
-        customtkinter.CTkButton(action_button_frame, text="Show Menu Preview", command=self.show_menu_preview).pack(side="left", padx=10)
-
+        # Removed "Show Menu Preview" button as it's now persistent
 
         # --- Apply All Button (Spanning bottom) ---
         self.apply_all_button = customtkinter.CTkButton(self, text="Apply All Changes to Resource", command=self.apply_all_changes_to_resource)
-        self.apply_all_button.grid(row=2, column=0, columnspan=2, pady=10, sticky="s")
+        self.apply_all_button.grid(row=3, column=0, columnspan=2, pady=10, sticky="s") # Adjusted row
 
         self.selected_tree_item_id: Optional[str] = None
         self.selected_menu_entry: Optional[MenuItemEntry] = None
         self.prop_widgets: Dict[str, customtkinter.CTkBaseClass] = {}
 
-        self.populate_menu_tree()
+        self.populate_menu_tree() # Populates tree
+        self.render_interactive_menu_bar() # Renders the new menu bar
         self._clear_properties_pane() # Initially empty/disabled
+
+    def _find_item_by_path(self, path: str) -> Optional[MenuItemEntry]:
+        """Finds a MenuItemEntry using a path of indices (e.g., "0.1.2")."""
+        indices = [int(i) for i in path.split('.')]
+        current_list = self.menu_items
+        found_item: Optional[MenuItemEntry] = None
+        for index in indices:
+            if index < len(current_list):
+                found_item = current_list[index]
+                current_list = found_item.children
+            else:
+                return None # Path is invalid
+        return found_item
 
     def _map_iid_to_menu_item(self, iid: str, items_list: Optional[List[MenuItemEntry]] = None) -> Optional[MenuItemEntry]:
         """Finds a MenuItemEntry by its treeview iid."""
@@ -259,6 +277,7 @@ class MenuEditorFrame(customtkinter.CTkFrame):
         new_item = MenuItemEntry(text="New Item", id_val=0, is_ex=self.is_ex) # Default ID 0
         target_list.append(new_item)
         self.populate_menu_tree()
+        self.render_interactive_menu_bar()
         if self.app_callbacks.get('set_dirty_callback'): self.app_callbacks['set_dirty_callback'](True)
 
     def on_add_popup(self):
@@ -266,6 +285,7 @@ class MenuEditorFrame(customtkinter.CTkFrame):
         new_popup = MenuItemEntry(item_type="POPUP", text="New Popup", children=[], is_ex=self.is_ex)
         target_list.append(new_popup)
         self.populate_menu_tree()
+        self.render_interactive_menu_bar()
         if self.app_callbacks.get('set_dirty_callback'): self.app_callbacks['set_dirty_callback'](True)
 
     def on_add_separator(self):
@@ -273,6 +293,7 @@ class MenuEditorFrame(customtkinter.CTkFrame):
         new_sep = MenuItemEntry(item_type="SEPARATOR", text="SEPARATOR", is_ex=self.is_ex) # ID is irrelevant
         target_list.append(new_sep)
         self.populate_menu_tree()
+        self.render_interactive_menu_bar()
         if self.app_callbacks.get('set_dirty_callback'): self.app_callbacks['set_dirty_callback'](True)
 
     def on_delete_selected(self):
@@ -285,6 +306,7 @@ class MenuEditorFrame(customtkinter.CTkFrame):
             if parent_list is not None and index != -1:
                 del parent_list[index]
                 self.populate_menu_tree()
+                self.render_interactive_menu_bar()
                 self._clear_properties_pane()
                 if self.app_callbacks.get('set_dirty_callback'): self.app_callbacks['set_dirty_callback'](True)
 
@@ -299,6 +321,7 @@ class MenuEditorFrame(customtkinter.CTkFrame):
             item_to_move = parent_list.pop(index)
             parent_list.insert(new_index, item_to_move)
             self.populate_menu_tree()
+            self.render_interactive_menu_bar()
             # Re-select the moved item
             new_iid = str(id(item_to_move))
             if self.menu_tree.exists(new_iid):
@@ -370,6 +393,7 @@ class MenuEditorFrame(customtkinter.CTkFrame):
 
 
         self.populate_menu_tree()
+        self.render_interactive_menu_bar() # Update menu bar after changes
         if self.selected_tree_item_id and self.menu_tree.exists(self.selected_tree_item_id):
              self.menu_tree.selection_set(self.selected_tree_item_id)
              self.menu_tree.focus(self.selected_tree_item_id)
@@ -386,88 +410,147 @@ class MenuEditorFrame(customtkinter.CTkFrame):
             self.app_callbacks['set_dirty_callback'](True)
         messagebox.showinfo("Changes Applied", "All menu changes applied to in-memory resource. Save file to persist.", parent=self)
 
-    def _on_preview_menu_item_click(self, menu_item_entry: MenuItemEntry):
-        """ Placeholder action when a previewed menu item is clicked. """
-        messagebox.showinfo("Menu Item Clicked (Preview)",
-                            f"Text: '{menu_item_entry.text}'\n"
-                            f"ID: {menu_item_entry.get_id_display()}\n"
-                            f"Flags: {', '.join(menu_item_entry.get_flags_display_list())}",
-                            parent=self) # Parent to ensure it's on top of the preview window if possible
+    def _on_interactive_menu_item_click(self, item_path: str):
+        """Handles clicks on items from the interactive menu bar."""
+        # print(f"Interactive menu item clicked. Path: {item_path}")
+        item_entry = self._find_item_by_path(item_path)
+        if item_entry:
+            # Find the corresponding tree item iid
+            # This is a bit inefficient, a reverse map from MenuItemEntry to iid could be useful
+            # or pass item_entry directly to on_menu_tree_select if we adapt it.
+            iid_to_select = None
+            for iid, entry_in_map in self._get_all_tree_iids_and_items().items():
+                if entry_in_map is item_entry:
+                    iid_to_select = iid
+                    break
 
-    def show_menu_preview(self):
-        """Creates and shows a Toplevel window with a tkinter.Menu preview."""
-        preview_window = customtkinter.CTkToplevel(self)
-        preview_window.title(f"Preview: {self.menu_resource.identifier.name_id_to_str()}")
-        preview_window.geometry("400x50") # Initial size, will be overridden by menu usually
+            if iid_to_select and self.menu_tree.exists(iid_to_select):
+                self.menu_tree.focus(iid_to_select)
+                self.menu_tree.selection_set(iid_to_select)
+                # self.on_menu_tree_select() # This will be triggered by selection_set
+            else: # Fallback if tree selection fails, directly populate props
+                self.selected_menu_entry = item_entry
+                self.selected_tree_item_id = None # Clear tree selection if direct
+                self._clear_properties_pane()
+                # Code from on_menu_tree_select to populate props pane:
+                item = self.selected_menu_entry
+                item.update_string_flags_from_numeric()
+                # ... (rest of _populate_props_pane logic, simplified for now) ...
+                customtkinter.CTkLabel(self.props_frame, text=f"Selected (Menu Bar): {item.text}").pack()
 
-        menubar = tkinter.Menu(preview_window)
+                # For now, just a simple message. A full property pane update like in on_menu_tree_select
+                # would be needed for full interactivity via menu bar clicks.
+                messagebox.showinfo("Menu Item Clicked (Interactive)",
+                                    f"Text: '{item_entry.text}'\n"
+                                    f"ID: {item_entry.get_id_display()}\n"
+                                    f"Path: {item_path}",
+                                    parent=self)
+        else:
+            print(f"Warning: Could not find menu item for path {item_path}")
 
-        # Helper to recursively populate the tkinter.Menu
-        def _populate_tkinter_menu_recursive(tk_menu_parent, item_list: List[MenuItemEntry]):
-            for item_entry in item_list:
-                flags_as_strings = item_entry.get_flags_display_list() # Use existing method to get flags
+    def _get_all_tree_iids_and_items(self, parent_node_id:str = "") -> Dict[str, MenuItemEntry]:
+        """ Helper to get a flat dict of all tree iids to menu items. """
+        # This is a temporary helper, ideally we'd have a direct mapping or better way to find iid.
+        # For now, this is not used in the primary path.
+        # The goal is to select in tree, which calls on_menu_tree_select, which populates props.
+        # So, _map_iid_to_menu_item is primary for tree->item, and _find_item_by_path for menu->item.
+        # The selection logic in _on_interactive_menu_item_click needs to find the iid for an item.
+        # This might require iterating through self.menu_tree.get_children recursively.
+        # Or, if tree iids are stable (str(id(item_obj))), we can build this map once.
+        # For now, the selection in tree is the most robust way to trigger property pane update.
+        # This function is more of a placeholder for a more direct iid lookup if needed.
+        all_items = {}
+        children = self.menu_tree.get_children(parent_node_id)
+        for child_iid in children:
+            item = self._map_iid_to_menu_item(child_iid) # Assuming iid is str(id(item))
+            if item: all_items[child_iid] = item
+            all_items.update(self._get_all_tree_iids_and_items(child_iid))
+        return all_items
+
+
+    def render_interactive_menu_bar(self):
+        """Clears and rebuilds the interactive menu bar using tkinter.Menubuttons."""
+        for widget in self.interactive_menu_bar_frame.winfo_children():
+            widget.destroy()
+
+        bg_color = self._apply_appearance_mode(customtkinter.ThemeManager.theme["CTkFrame"]["fg_color"])
+        fg_color = self._apply_appearance_mode(customtkinter.ThemeManager.theme["CTkButton"]["text_color"])
+        active_bg = self._apply_appearance_mode(customtkinter.ThemeManager.theme["CTkButton"]["hover_color"])
+        active_fg = self._apply_appearance_mode(customtkinter.ThemeManager.theme["CTkButton"]["text_color"])
+
+
+        def _populate_menu_recursive(tk_menu_parent, item_list: List[MenuItemEntry], current_path: str):
+            for idx, item_entry in enumerate(item_list):
+                item_local_path = f"{current_path}.{idx}" if current_path else str(idx)
+                flags_as_strings = item_entry.get_flags_display_list()
+                item_state = "disabled" if ("GRAYED" in flags_as_strings or "INACTIVE" in flags_as_strings) else "normal"
 
                 if item_entry.item_type == "SEPARATOR":
                     tk_menu_parent.add_separator()
                 elif item_entry.item_type == "POPUP":
                     submenu = tkinter.Menu(tk_menu_parent, tearoff=0)
-                    _populate_tkinter_menu_recursive(submenu, item_entry.children)
-                    tk_menu_parent.add_cascade(label=item_entry.text, menu=submenu)
-
-                    # Check if the POPUP itself should be disabled
-                    if "GRAYED" in flags_as_strings or "INACTIVE" in flags_as_strings:
-                        # Get the index of the last added item (the cascade)
-                        last_index = tk_menu_parent.index(tkinter.END)
-                        if last_index is not None: # Should always be an index
-                           tk_menu_parent.entryconfigure(last_index, state="disabled")
+                    _populate_menu_recursive(submenu, item_entry.children, item_local_path)
+                    tk_menu_parent.add_cascade(label=item_entry.text, menu=submenu, state=item_state)
                 else: # Regular MENUITEM
-                    item_label = item_entry.text
-                    is_checked = "CHECKED" in flags_as_strings
+                    is_checked = "CHECKED" in flags_as_strings # Basic check state
+                    # For tkinter.Menu, checkbuttons need a variable. We simulate state for preview.
+                    # If we wanted actual check behavior, we'd need to store tkinter.BooleanVar() per item.
+                    if is_checked: # Visually indicate check, but it's a command item
+                         # Simple way: prefix label. Or use add_checkbutton and manage var (more complex for dynamic).
+                         # tk_menu_parent.add_checkbutton(label=item_entry.text, onvalue=1, offvalue=0, variable=...)
+                        tk_menu_parent.add_command(label=f"{item_entry.text} (\u2713)" if is_checked else item_entry.text,
+                                                   command=lambda p=item_local_path: self._on_interactive_menu_item_click(p),
+                                                   state=item_state)
+                    else:
+                        tk_menu_parent.add_command(label=item_entry.text,
+                                                   command=lambda p=item_local_path: self._on_interactive_menu_item_click(p),
+                                                   state=item_state)
 
-                    # For checkbutton type items
-                    if is_checked: # Simplified: if CHECKED flag, make it a checkbutton
-                        # We need a variable for checkbuttons to work, but for a static preview,
-                        # we can't easily store these. So, we just show its checked state.
-                        # A real checkbutton would need a tkinter.BooleanVar().
-                        # For preview, we can simulate by adding (Checked) or using add_checkbutton if state can be static.
-                        # tk_menu_parent.add_checkbutton(label=item_label, command=lambda i=item_entry: self._on_preview_menu_item_click(i))
-                        # tk_menu_parent.invoke(tk_menu_parent.index(tkinter.END)) # this would check it, but needs var
-                        # Simplification: just add command, visual state handled by entryconfigure if possible
-                        tk_menu_parent.add_command(label=item_label, command=lambda i=item_entry: self._on_preview_menu_item_click(i))
+        if not self.menu_items:
+            # Perhaps show a disabled "Empty Menu" label in the bar frame
+            # empty_label = customtkinter.CTkLabel(self.interactive_menu_bar_frame, text="(No menu items to display)")
+            # empty_label.pack(side="left", padx=5, pady=5)
+            return
 
-                    else: # Normal command
-                        tk_menu_parent.add_command(label=item_label, command=lambda i=item_entry: self._on_preview_menu_item_click(i))
+        # Create Menubuttons for top-level POPUP items, or a single Menubutton for a flat list
+        if any(item.item_type == "POPUP" for item in self.menu_items): # If top level has popups, treat as menubar
+            for top_level_idx, top_item in enumerate(self.menu_items):
+                path_str = str(top_level_idx)
+                if top_item.item_type == "POPUP":
+                    mb = tkinter.Menubutton(self.interactive_menu_bar_frame, text=top_item.text,
+                                            relief="raised", borderwidth=1,
+                                            bg=bg_color, fg=fg_color,
+                                            activebackground=active_bg, activeforeground=active_fg)
+                    mb.menu = tkinter.Menu(mb, tearoff=0, bg=bg_color, fg=fg_color,
+                                           activebackground=active_bg, activeforeground=active_fg)
+                    mb["menu"] = mb.menu
+                    _populate_menu_recursive(mb.menu, top_item.children, path_str)
+                    mb.pack(side="left", padx=1, pady=1)
+                else: # Top-level item that is not a POPUP (e.g. a single command)
+                    # This is unusual for a main menubar but possible for simple menus
+                    btn = tkinter.Button(self.interactive_menu_bar_frame, text=top_item.text,
+                                         command=lambda p=path_str: self._on_interactive_menu_item_click(p),
+                                         relief="raised", borderwidth=1,
+                                         bg=bg_color, fg=fg_color,
+                                         activebackground=active_bg, activeforeground=active_fg)
+                    if "GRAYED" in top_item.get_flags_display_list() or "INACTIVE" in top_item.get_flags_display_list():
+                        btn.config(state="disabled")
+                    btn.pack(side="left", padx=1, pady=1)
+        elif self.menu_items: # A flat list of items, treat as a single popup menu under a default name
+            default_menu_name = self.menu_resource.identifier.name_id_to_str() or "Menu"
+            mb = tkinter.Menubutton(self.interactive_menu_bar_frame, text=default_menu_name,
+                                    relief="raised", borderwidth=1,
+                                    bg=bg_color, fg=fg_color,
+                                    activebackground=active_bg, activeforeground=active_fg)
+            mb.menu = tkinter.Menu(mb, tearoff=0, bg=bg_color, fg=fg_color,
+                                   activebackground=active_bg, activeforeground=active_fg)
+            mb["menu"] = mb.menu
+            _populate_menu_recursive(mb.menu, self.menu_items, "") # Start path from empty for direct children
+            mb.pack(side="left", padx=1, pady=1)
+        # If self.menu_items is empty, nothing is packed.
 
-                    # Apply disabled state if GRAYED or INACTIVE
-                    if "GRAYED" in flags_as_strings or "INACTIVE" in flags_as_strings:
-                        last_index = tk_menu_parent.index(tkinter.END)
-                        if last_index is not None:
-                           tk_menu_parent.entryconfigure(last_index, state="disabled")
-
-        # Populate the main menubar (which itself is a menu)
-        # If the top-level items are meant to be cascades (like "File", "Edit" on a main window bar)
-        # or direct commands depends on menu structure. Assuming here the first level of self.menu_items
-        # are the menus to show on the bar (e.g. "File", "Edit" are POPUPs).
-        # If the menu_items represent a single popup menu, this needs adjustment.
-        # For typical resource menus, self.menu_items IS the list for one popup.
-        # So, we might want to wrap it in a dummy "Preview" cascade if it's not already a series of popups.
-
-        if self.menu_items and all(item.item_type == "POPUP" for item in self.menu_items):
-            # This structure is like a main window menu bar (File, Edit, Help are all POPUPs)
-             _populate_tkinter_menu_recursive(menubar, self.menu_items)
-        elif self.menu_items:
-             # This structure is like a single context menu or a submenu
-             # Create a single cascade entry on the menubar to host this list
-            single_menu_host = tkinter.Menu(menubar, tearoff=0)
-            _populate_tkinter_menu_recursive(single_menu_host, self.menu_items)
-            menubar.add_cascade(label=self.menu_resource.identifier.name_id_to_str() or "Menu", menu=single_menu_host)
-        else:
-            menubar.add_command(label="(Empty Menu)", state="disabled")
-
-
-        preview_window.config(menu=menubar)
-        preview_window.transient(self) # Keep it on top of the main window
-        preview_window.grab_set()      # Modal behavior
+    # Remove the Toplevel based preview as we now have an embedded one
+    # def show_menu_preview(self): ... (old method to be removed or commented out)
 
 
 if __name__ == '__main__':

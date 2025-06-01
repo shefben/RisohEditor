@@ -451,10 +451,11 @@ class App(customtkinter.CTk):
                                 info_text_parts.append(f"Displayed member: Type {self.get_type_display_name(actual_image_to_display.identifier.type_id)}, Lang {actual_image_to_display.identifier.language_id}")
                                 info_text_parts.append(f"Member Image Size: {img.width}x{img.height}, Format: {getattr(img,'format','')}")
                             except Exception as img_err_member:
+                                print(f"Pillow error opening member image {repr(actual_image_to_display.identifier.name_id_to_str())} (Type: {repr(actual_image_to_display.identifier.type_id_to_str())}, Lang: {actual_image_to_display.identifier.language_id}) for group {repr(res_obj.identifier.name_id_to_str())}: {repr(img_err_member)}")
                                 info_text_parts.append(f"Error displaying member image: {img_err_member}")
                                 if actual_image_to_display.data: info_text_parts.append(f"Member Data (Hex, first 64B): {actual_image_to_display.data[:64].hex(' ', 8)}")
                         else:
-                            info_text_parts.append(f"Member resource (ID: {member_id_to_find}, Type: {self.get_type_display_name(expected_member_type)}) not found in loaded resources or has no data.")
+                            info_text_parts.append(f"Member resource (ID: {repr(member_id_to_find)}, Type: {repr(self.get_type_display_name(expected_member_type))}) not found in loaded resources or has no data.")
                     else:
                          info_text_parts.append("Could not select a member entry from the group (e.g., group is empty or entries invalid).")
                 elif not hasattr(res_obj, 'icon_entries') or not res_obj.icon_entries : # Not a GroupIconResource or no entries

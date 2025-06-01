@@ -12,7 +12,7 @@ from ..core.dialog_parser_util import (
     BUTTON_ATOM, EDIT_ATOM, STATIC_ATOM, LISTBOX_ATOM, COMBOBOX_ATOM, SCROLLBAR_ATOM, # Atoms
     WC_LISTVIEW, WC_TREEVIEW, WC_TABCONTROL, WC_PROGRESS, WC_TOOLBAR, # String class names
     WC_TRACKBAR, WC_UPDOWN, WC_DATETIMEPICK, WC_MONTHCAL, WC_IPADDRESS, WC_LINK,
-    BS_PUSHBUTTON, WS_CHILD, WS_VISIBLE, WS_TABSTOP # For default control
+    BS_PUSHBUTTON, WS_CHILD, WS_VISIBLE, WS_TABSTOP, WS_CAPTION # For default control and style decoding
 )
 from ..core.resource_types import DialogResource # For type hinting
 
@@ -67,14 +67,18 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         self.preview_canvas.configure(width=preview_width, height=preview_height)
 
         for control_entry in self.controls_copy:
-            widget_class = None; widget_params = {"master": self.preview_canvas, "text": control_entry.text}
-
             # Normalize class name for matching (string or atom)
             cn_str = ""
             if isinstance(control_entry.class_name, int): # Atom
                 cn_str = ATOM_TO_CLASSNAME_MAP.get(control_entry.class_name, f"ATOM_0x{control_entry.class_name:04X}").upper()
             elif isinstance(control_entry.class_name, str):
                 cn_str = control_entry.class_name.upper()
+
+            # --- TEMPORARY DEBUG PRINT ---
+            print(f"Control Class Normalized: '{cn_str}', Original: {repr(control_entry.class_name)}, Text: '{control_entry.text}', ID: {control_entry.get_id_display()}")
+            # --- END TEMPORARY DEBUG PRINT ---
+
+            widget_class = None; widget_params = {"master": self.preview_canvas, "text": control_entry.text}
 
             if cn_str == "BUTTON": widget_class = customtkinter.CTkButton
             elif cn_str == "EDIT":
@@ -84,6 +88,8 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                 widget_class = tkinter.Listbox; widget_params.update({"background": "#333333", "foreground": "white", "borderwidth":1})
             elif cn_str == "COMBOBOX":
                 widget_class = customtkinter.CTkComboBox; widget_params["values"] = [control_entry.text] if control_entry.text else ["Sample"]; widget_params["state"] = "readonly"; del widget_params["text"]
+            elif cn_str == "SCROLLBAR": # Added SCROLLBAR
+                widget_class = customtkinter.CTkScrollbar; widget_params.pop("text", None) # Scrollbar might not take text
             elif cn_str in [cls.upper() for cls in KNOWN_STRING_CLASSES]:
                 widget_class = "placeholder_frame"
 
@@ -103,11 +109,11 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                 if widget_class == tkinter.Listbox: # Listbox handles width/height differently (chars/lines)
                      preview_widget = widget_class(**widget_params) # Original params without pixel width/height
                      preview_widget.insert("end", control_entry.text if control_entry.text else "Listbox Item")
-                elif widget_class in [customtkinter.CTkButton, customtkinter.CTkEntry, customtkinter.CTkLabel, customtkinter.CTkComboBox]:
+                elif widget_class in [customtkinter.CTkButton, customtkinter.CTkEntry, customtkinter.CTkLabel, customtkinter.CTkComboBox, customtkinter.CTkScrollbar]: # Added CTkScrollbar
                     preview_widget = widget_class(**widget_params_with_size)
                 else: # Should ideally not happen if all CTk widgets are covered
                     preview_widget = widget_class(**widget_params) # Fallback, might not use w/h correctly
-            else: # Unknown widget, create a placeholder frame
+            else: # Unknown widget (widget_class is None), create a placeholder frame
                 preview_widget = customtkinter.CTkFrame(self.preview_canvas, border_width=1, fg_color="gray30", width=control_entry.width, height=control_entry.height)
                 customtkinter.CTkLabel(preview_widget, text=f"Unknown: {cn_str}\n'{control_entry.text[:20]}'").pack(padx=2,pady=2, expand=True, fill="both")
 
