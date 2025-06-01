@@ -49,25 +49,25 @@ MFS_HILITE = 0x00000080
 MFS_DEFAULT = 0x00001000
 # MFS_ENABLED = 0x00000000 (default state, item is enabled)
 
-    MENUEX_TEMPLATE_SIGNATURE_VERSION = 1
-    MENUEX_HEADER_OFFSET_TO_ITEMS = 4
+MENUEX_TEMPLATE_SIGNATURE_VERSION = 1
+MENUEX_HEADER_OFFSET_TO_ITEMS = 4
 
-    # Reverse map for string to flag value, used in update_numeric_flags_from_strings
-    # This needs to be comprehensive and handle potential ambiguities if names are reused (though less common for flags).
-    # We will filter by is_ex contextually.
-    _STR_TO_FLAG_LOOKUP = {
-        "STRING": MF_STRING, "SEPARATOR": MF_SEPARATOR, "POPUP": MF_POPUP, "OWNERDRAW": MF_OWNERDRAW,
-        "GRAYED": MF_GRAYED, "INACTIVE": MF_DISABLED, "CHECKED": MF_CHECKED,
-        "MENUBARBREAK": MF_MENUBARBREAK, "MENUBREAK": MF_MENUBREAK, "HELP": MF_HELP,
-        "RADIO": MFT_RADIOCHECK, "BITMAP": MFT_BITMAP, "DEFAULT": MFS_DEFAULT, "HILITE": MFS_HILITE,
-        # Explicit MFT/MFS strings if they differ or for clarity, though some values overlap
-        "MFT_STRING": MFT_STRING, "MFT_BITMAP": MFT_BITMAP, "MFT_MENUBARBREAK": MFT_MENUBARBREAK,
-        "MFT_MENUBREAK": MFT_MENUBREAK, "MFT_OWNERDRAW": MF_OWNERDRAW, "MFT_RADIOCHECK": MFT_RADIOCHECK,
-        "MFT_SEPARATOR": MF_SEPARATOR, "MFT_RIGHTORDER": MFT_RIGHTORDER, "MFT_RIGHTJUSTIFY": MFT_RIGHTJUSTIFY,
-        "MFS_GRAYED": MFS_GRAYED, "MFS_DISABLED": MFS_DISABLED, "MFS_CHECKED": MFS_CHECKED,
-        "MFS_HILITE": MFS_HILITE, "MFS_DEFAULT": MFS_DEFAULT,
-        # MFR flags for bResInfo_word if needed, but typically not in flags_list directly.
-    }
+# Reverse map for string to flag value, used in update_numeric_flags_from_strings
+# This needs to be comprehensive and handle potential ambiguities if names are reused (though less common for flags).
+# We will filter by is_ex contextually.
+_STR_TO_FLAG_LOOKUP = {
+    "STRING": MF_STRING, "SEPARATOR": MF_SEPARATOR, "POPUP": MF_POPUP, "OWNERDRAW": MF_OWNERDRAW,
+    "GRAYED": MF_GRAYED, "INACTIVE": MF_DISABLED, "CHECKED": MF_CHECKED,
+    "MENUBARBREAK": MF_MENUBARBREAK, "MENUBREAK": MF_MENUBREAK, "HELP": MF_HELP,
+    "RADIO": MFT_RADIOCHECK, "BITMAP": MFT_BITMAP, "DEFAULT": MFS_DEFAULT, "HILITE": MFS_HILITE,
+    # Explicit MFT/MFS strings if they differ or for clarity, though some values overlap
+    "MFT_STRING": MFT_STRING, "MFT_BITMAP": MFT_BITMAP, "MFT_MENUBARBREAK": MFT_MENUBARBREAK,
+    "MFT_MENUBREAK": MFT_MENUBREAK, "MFT_OWNERDRAW": MF_OWNERDRAW, "MFT_RADIOCHECK": MFT_RADIOCHECK,
+    "MFT_SEPARATOR": MF_SEPARATOR, "MFT_RIGHTORDER": MFT_RIGHTORDER, "MFT_RIGHTJUSTIFY": MFT_RIGHTJUSTIFY,
+    "MFS_GRAYED": MFS_GRAYED, "MFS_DISABLED": MFS_DISABLED, "MFS_CHECKED": MFS_CHECKED,
+    "MFS_HILITE": MFS_HILITE, "MFS_DEFAULT": MFS_DEFAULT,
+    # MFR flags for bResInfo_word if needed, but typically not in flags_list directly.
+}
 
 
 FLAG_TO_STR_MAP = {
