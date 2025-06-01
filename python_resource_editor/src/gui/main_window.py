@@ -350,25 +350,65 @@ class App(customtkinter.CTk):
                     img_data = None
                     if isinstance(res_obj, FileResource):
                         if res_obj.data is None:
-                            try: base_dir = os.path.dirname(self.current_filepath) if self.current_filepath else ""; res_obj.load_data(base_dir=base_dir)
-                            except Exception as load_err: raise UnidentifiedImageError(f"Could not load image file {res_obj.filepath}: {load_err}")
+                            try:
+                                base_dir = os.path.dirname(self.current_filepath) if self.current_filepath else ""
+                                res_obj.load_data(base_dir=base_dir)
+                            except Exception as load_err:
+                                raise UnidentifiedImageError(f"Could not load image file {res_obj.filepath}: {load_err}")
                         img_data = io.BytesIO(res_obj.data)
-                    elif res_obj.data: img_data = io.BytesIO(res_obj.data)
+                    elif res_obj.data:
+                        img_data = io.BytesIO(res_obj.data)
+
                     if img_data:
                         img = Image.open(img_data)
-                        if res_obj.identifier.type_id == RT_ICON or (isinstance(res_obj, FileResource) and res_obj.filepath.lower().endswith('.ico')):
-                            if hasattr(img, 'ico'): sizes = img.ico.sizes();
-                            if sizes: target_size = (32,32); img.size = target_size if target_size in sizes else sizes[-1]
+
+                        # ????????????????????????????
+                        # Replace old ICO logic with combined RAW?RT_ICON / ICO?file check
+                        is_raw_icon = (res_obj.identifier.type_id == RT_ICON)
+                        is_ico_file = (getattr(img, "format", "").upper() == "ICO")
+                        if is_raw_icon or is_ico_file:
+                            # If it?s a true .ico container with multiple frames, pick 32×32 or the largest
+                            if is_ico_file and getattr(img, "n_frames", 1) > 1:
+                                target = (32, 32)
+                                best = None
+                                for i in range(img.n_frames):
+                                    frm = img.getimage(i)
+                                    if frm.size == target:
+                                        best = frm
+                                        break
+                                    if not best or (frm.width * frm.height) > (best.width * best.height):
+                                        best = frm
+                                img = best
+                            # Ensure a displayable mode (some RT_ICON bitmaps come in BMP palette modes)
+                            if img.mode not in ("RGB", "RGBA"):
+                                img = img.convert("RGBA")
+                        # ????????????????????????????
+
                         max_dim = 256
-                        if img.width > max_dim or img.height > max_dim: img.thumbnail((max_dim, max_dim))
-                        ctk_image = customtkinter.CTkImage(light_image=img, dark_image=img, size=(img.width, img.height))
-                        image_label = customtkinter.CTkLabel(self.editor_frame, image=ctk_image, text="")
-                        image_label.pack(padx=10, pady=10, expand=True, anchor="center"); image_label.image = ctk_image
+                        if img.width > max_dim or img.height > max_dim:
+                            img.thumbnail((max_dim, max_dim))
+
+                        ctk_image = customtkinter.CTkImage(
+                            light_image=img, dark_image=img,
+                            size=(img.width, img.height)
+                        )
+                        image_label = customtkinter.CTkLabel(
+                            self.editor_frame, image=ctk_image, text=""
+                        )
+                        image_label.pack(padx=10, pady=10, expand=True, anchor="center")
+                        image_label.image = ctk_image
                         info_text_parts.append(f"Image Size: {img.width}x{img.height}")
-                    else: raise UnidentifiedImageError("No image data available")
+                    else:
+                        raise UnidentifiedImageError("No image data available")
+
                 except (UnidentifiedImageError, IOError, EOFError, TypeError, ValueError) as img_err:
                     info_text_parts.append(f"Image Preview Error: {img_err}")
-                    if res_obj.data: info_text_parts.append(f"\n--- Data Preview (Hex, up to 256 bytes) ---\n{res_obj.data[:256].hex(' ', 16)}")
+                    if res_obj.data:
+                        info_text_parts.append(
+                            "\n--- Data Preview (Hex, up to 256 bytes) ---\n"
+                            f"{res_obj.data[:256].hex(' ', 16)}"
+                        )
+
             elif isinstance(res_obj, TextBlockResource):
                 info_text_parts.append(f"Text Length: {len(res_obj.text_content)}")
                 self.current_editor_widget = customtkinter.CTkTextbox(self.editor_frame, font=("monospace", 12))

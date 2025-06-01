@@ -80,38 +80,68 @@ class VersionInfoEditorFrame(customtkinter.CTkFrame):
     def _create_string_tables_tab(self, tab_frame):
         top_frame = customtkinter.CTkFrame(tab_frame, fg_color="transparent")
         top_frame.pack(fill="x", padx=5, pady=5)
-        customtkinter.CTkLabel(top_frame, text="Language/Codepage Block:").pack(side="left", padx=(0,5))
 
-        self.sfi_widgets["lang_combo"] = customtkinter.CTkComboBox(top_frame, values=[], command=self._on_sfi_lang_select, width=150) # Initial empty
+        customtkinter.CTkLabel(top_frame, text="Language/Codepage Block:").pack(side="left", padx=(0, 5))
+
+        # Create the combo box (initially empty)
+        self.sfi_widgets["lang_combo"] = customtkinter.CTkComboBox(
+            top_frame,
+            values=[],
+            command=self._on_sfi_lang_select,
+            width=150
+        )
         self.sfi_widgets["lang_combo"].pack(side="left", padx=5)
-        self._populate_sfi_blocks_combobox() # Populate and set initial
 
-        customtkinter.CTkButton(top_frame, text="Add Block", width=80, command=self._on_add_sfi_block).pack(side="left", padx=5)
-        customtkinter.CTkButton(top_frame, text="Del Block", width=80, command=self._on_delete_sfi_block).pack(side="left", padx=5)
+        # ?Add Block? / ?Del Block? buttons
+        customtkinter.CTkButton(
+            top_frame, text="Add Block", width=80, command=self._on_add_sfi_block
+        ).pack(side="left", padx=5)
+        customtkinter.CTkButton(
+            top_frame, text="Del Block", width=80, command=self._on_delete_sfi_block
+        ).pack(side="left", padx=5)
 
+        # Now create the Treeview (so that "strings_tree" will exist before we try to populate it)
         tree_frame = customtkinter.CTkFrame(tab_frame)
         tree_frame.pack(expand=True, fill="both", padx=5, pady=5)
-        tree_frame.grid_columnconfigure(0, weight=1); tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+        tree_frame.grid_rowconfigure(0, weight=1)
 
         str_tree = ttk.Treeview(tree_frame, columns=("Key", "Value"), show="headings")
-        str_tree.heading("Key", text="Key"); str_tree.column("Key", width=150, anchor="w")
-        str_tree.heading("Value", text="Value"); str_tree.column("Value", width=300, stretch=True, anchor="w")
+        str_tree.heading("Key", text="Key")
+        str_tree.column("Key", width=150, anchor="w")
+        str_tree.heading("Value", text="Value")
+        str_tree.column("Value", width=300, stretch=True, anchor="w")
         str_tree.grid(row=0, column=0, sticky="nsew")
+
+        # Register the Treeview so future calls to _populate_sfi_entries_for_lang can find it
         self.sfi_widgets["strings_tree"] = str_tree
+
+        # Double-click to edit
         str_tree.bind("<Double-1>", lambda e: self._on_edit_sfi_entry())
 
+        # Vertical scrollbar for the Treeview
         str_tree_scroll_y = ttk.Scrollbar(tree_frame, orient="vertical", command=str_tree.yview)
-        str_tree_scroll_y.grid(row=0, column=1, sticky="ns"); str_tree.configure(yscrollcommand=str_tree_scroll_y.set)
+        str_tree_scroll_y.grid(row=0, column=1, sticky="ns")
+        str_tree.configure(yscrollcommand=str_tree_scroll_y.set)
 
+        # Button row for adding/editing/deleting individual strings
         str_button_frame = customtkinter.CTkFrame(tab_frame, fg_color="transparent")
         str_button_frame.pack(fill="x", padx=5, pady=5)
         customtkinter.CTkButton(str_button_frame, text="Add String", command=self._on_add_sfi_entry).pack(side="left", padx=5)
         customtkinter.CTkButton(str_button_frame, text="Edit String", command=self._on_edit_sfi_entry).pack(side="left", padx=5)
         customtkinter.CTkButton(str_button_frame, text="Delete String", command=self._on_delete_sfi_entry).pack(side="left", padx=5)
 
-        if self.string_tables_copy: self._populate_sfi_entries_for_lang(self.string_tables_copy[0].lang_codepage_hex)
-        else: self._populate_sfi_entries_for_lang(None) # Clear tree
+        # Only now that "strings_tree" exists do we populate the combo and initial entries
+        self._populate_sfi_blocks_combobox()
 
+        # If there are existing string-table blocks, show the first one; otherwise clear
+        if self.string_tables_copy:
+            first_lang = self.string_tables_copy[0].lang_codepage_hex
+            self.sfi_widgets["lang_combo"].set(first_lang)
+            self._populate_sfi_entries_for_lang(first_lang)
+        else:
+            self.sfi_widgets["lang_combo"].set("")  # no blocks
+            self._populate_sfi_entries_for_lang(None)
 
     def _create_var_info_tab(self, tab_frame):
         customtkinter.CTkLabel(tab_frame, text="VarFileInfo (Primarily 'Translation' Block)").pack(anchor="w", padx=5, pady=5)
@@ -152,11 +182,32 @@ class VersionInfoEditorFrame(customtkinter.CTkFrame):
             if self.app_callbacks.get('set_dirty_callback'): self.app_callbacks['set_dirty_callback'](True)
 
     def _populate_sfi_blocks_combobox(self):
-        lang_cp_keys = [st.lang_codepage_hex for st in self.string_tables_copy] if self.string_tables_copy else ["(No StringFileInfo Blocks)"]
+        # Build the list of lang/codepage keys
+        if self.string_tables_copy:
+            lang_cp_keys = [st.lang_codepage_hex for st in self.string_tables_copy]
+        else:
+            lang_cp_keys = ["(No StringFileInfo Blocks)"]
+
+        # Update the combo box?s dropdown values
         self.sfi_widgets["lang_combo"].configure(values=lang_cp_keys)
-        current_selection = lang_cp_keys[0] if lang_cp_keys[0] != "(No StringFileInfo Blocks)" else ""
+
+        # Pick the first one by default (unless it?s the placeholder)
+        current_selection = lang_cp_keys[0]
+        if current_selection == "(No StringFileInfo Blocks)":
+            current_selection = ""
+
         self.sfi_widgets["lang_combo"].set(current_selection)
-        self._populate_sfi_entries_for_lang(current_selection if current_selection else None)
+
+        # If the Treeview hasn?t been created yet, skip populating entries
+        if "strings_tree" not in self.sfi_widgets:
+            return
+
+        # Finally, show the entries for whichever block is currently selected (or clear if none)
+        if current_selection:
+            self._populate_sfi_entries_for_lang(current_selection)
+        else:
+            self._populate_sfi_entries_for_lang(None)
+
 
 
     def _on_sfi_lang_select(self, selected_lang_cp: str): self._populate_sfi_entries_for_lang(selected_lang_cp)
