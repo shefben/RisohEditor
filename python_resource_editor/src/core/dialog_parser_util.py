@@ -296,37 +296,69 @@ class DialogProperties:
         return (f"DialogProperties(name='{self.symbolic_name or self.name}', caption='{self.caption[:20]}...', "
                 f"size=({self.width}x{self.height}), style=0x{self.style:X}, is_ex={self.is_ex})")
 
-# --- Binary Parsing Helper Functions --- (Unchanged from previous step)
-def _read_unicode_string_align(stream: io.BytesIO) -> str:
-    start_pos = stream.tell()
+# --- Binary Parsing Helper Functions ---
+def _read_unicode_string_align(stream: io.BytesIO) -> Optional[str]:
+    """
+    Reads a null-terminated UTF-16LE string from the stream, then aligns
+    the stream position to the next DWORD boundary.
+    Returns the string, or None if EOF is encountered before any data/terminator.
+    Raises EOFError if string is unterminated or padding is incomplete.
+    """
+    initial_stream_pos = stream.tell()
+    
+    # Check for immediate EOF
+    first_peek = stream.read(2)
+    if not first_peek: # Empty read means true EOF at start
+        return None 
+    stream.seek(initial_pos) # Rewind after peek
+
+    if len(first_peek) < 2: # Partial read means true EOF at start
+        # This case should ideally be caught by caller's own read checks before calling this for a string
+        raise EOFError(f"Stream ended unexpectedly at offset {initial_stream_pos} before reading a unicode string or its terminator.")
+
+    # Handle empty string case (just a null terminator)
+    if first_peek == b'\x00\x00':
+        stream.read(2) # Consume the null terminator
+        current_pos_after_null = stream.tell()
+        padding_needed = (4 - (current_pos_after_null % 4)) % 4
+        if padding_needed > 0:
+            padding_bytes = stream.read(padding_needed)
+            if len(padding_bytes) < padding_needed:
+                raise EOFError(f"EOF: Expected {padding_needed} padding bytes after empty string, got {len(padding_bytes)}. Stream pos: {current_pos_after_null}")
+        return ""
+
+    # Read non-empty string
     chars = []
     while True:
         char_bytes = stream.read(2)
-        if not char_bytes or len(char_bytes) < 2: break
-        if char_bytes == b'\x00\x00': break
-        chars.append(char_bytes.decode('utf-16-le', errors='replace'))
-    current_pos = stream.tell()
-    padding = (4 - (current_pos % 4)) % 4
-    if padding > 0:
-        # Check if enough bytes are available for padding.
-        # This assumes 'stream' is an io.BytesIO object, which is typical in this context.
-        if hasattr(stream, 'getbuffer'):
-            total_len = stream.getbuffer().nbytes
-            if current_pos + padding > total_len:
-                # Not enough data for full padding. Read only what's available.
-                # This might happen with malformed resources.
-                padding_to_read = total_len - current_pos
-                if padding_to_read > 0:
-                    stream.read(padding_to_read)
-                # Optional: Log a warning if strict parsing is needed.
-                # print(f"Warning: Stream ended before full DWORD alignment padding could be read in _read_unicode_string_align. Read {padding_to_read} of {padding} bytes.")
-            else:
-                stream.read(padding) # Enough data, read full padding
-        else:
-            # Fallback for other stream types if getbuffer is not available.
-            # This might still raise EOFError if the stream is too short and doesn't support such checks.
-            stream.read(padding)
-    return "".join(chars)
+        if not char_bytes: # EOF before null terminator
+            raise EOFError(f"Unterminated unicode string: EOF encountered at offset {stream.tell()} after reading '{''.join(chars)}'.")
+        if len(char_bytes) < 2: # Short read before null terminator
+             raise EOFError(f"Unterminated unicode string: Short read (1 byte) at offset {stream.tell()} after reading '{''.join(chars)}'.")
+        
+        if char_bytes == b'\x00\x00': # Null terminator
+            break
+        try:
+            chars.append(char_bytes.decode('utf-16-le'))
+        except UnicodeDecodeError as ude:
+            # This should be rare if data is valid UTF-16LE, but good to catch
+            raise UnicodeDecodeError(ude.encoding, ude.object, ude.start, ude.end, f"{ude.reason} (at stream offset {stream.tell()-2})")
+            
+    string_val = "".join(chars)
+    
+    # Align to DWORD boundary
+    current_pos_after_string_and_null = stream.tell()
+    padding_needed = (4 - (current_pos_after_string_and_null % 4)) % 4
+    
+    if padding_needed > 0:
+        if hasattr(stream, 'getbuffer') and current_pos_after_string_and_null + padding_needed > len(stream.getbuffer()):
+             raise EOFError(f"EOF: Not enough data for alignment padding after string '{string_val}'. Expected {padding_needed} bytes at offset {current_pos_after_string_and_null}.")
+        
+        padding_bytes = stream.read(padding_needed)
+        if len(padding_bytes) < padding_needed:
+            raise EOFError(f"Short read for alignment padding after string '{string_val}'. Expected {padding_needed}, got {len(padding_bytes)} at offset {current_pos_after_string_and_null}.")
+            
+    return string_val
 
 def _read_word_or_string_align(stream: io.BytesIO) -> Tuple[Union[int, str, None], bool]:
     first_word_bytes = stream.read(2)
