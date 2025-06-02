@@ -304,60 +304,131 @@ def _read_unicode_string_align(stream: io.BytesIO) -> Optional[str]:
     Returns the string, or None if EOF is encountered before any data/terminator.
     Raises EOFError if string is unterminated or padding is incomplete.
     """
+    print(f"DEBUG_RUSA: Entry. Stream pos: {stream.tell()}") # LOGGING
     initial_stream_pos = stream.tell()
     
     # Check for immediate EOF
+    print(f"DEBUG_RUSA: Initial peek. Stream pos before read: {stream.tell()}") # LOGGING
     first_peek = stream.read(2)
+    print(f"DEBUG_RUSA: Initial peek. Read {len(first_peek)} bytes: {first_peek!r}. Stream pos after read: {stream.tell()}") # LOGGING
+    
     if not first_peek: # Empty read means true EOF at start
+        print(f"DEBUG_RUSA: Returning None due to immediate EOF. Stream pos: {stream.tell()}") # LOGGING
         return None 
-    stream.seek(initial_pos) # Rewind after peek
+    
+    # Rewind after peek, as we'll re-read for actual processing or specific logic.
+    print(f"DEBUG_RUSA: Rewinding after peek. Stream pos before seek: {stream.tell()}, target: {initial_stream_pos}") # LOGGING
+    stream.seek(initial_pos)
+    print(f"DEBUG_RUSA: Rewound. Stream pos after seek: {stream.tell()}") # LOGGING
 
-    if len(first_peek) < 2: # Partial read means true EOF at start
-        # This case should ideally be caught by caller's own read checks before calling this for a string
-        raise EOFError(f"Stream ended unexpectedly at offset {initial_stream_pos} before reading a unicode string or its terminator.")
+    # Re-read the first two bytes for decision making
+    # This ensures stream position is consistent for the paths below.
+    print(f"DEBUG_RUSA: Decision peek. Stream pos before read: {stream.tell()}") # LOGGING
+    decision_bytes = stream.read(2)
+    print(f"DEBUG_RUSA: Decision peek. Read {len(decision_bytes)} bytes: {decision_bytes!r}. Stream pos after read: {stream.tell()}") # LOGGING
 
-    # Handle empty string case (just a null terminator)
-    if first_peek == b'\x00\x00':
-        stream.read(2) # Consume the null terminator
+    if len(decision_bytes) < 2:
+        # This means EOF occurred when trying to read the first 2 bytes of a potential string/terminator.
+        err_msg = f"Stream ended unexpectedly at offset {initial_stream_pos}. Expected 2 bytes for string/terminator, got {len(decision_bytes)}."
+        print(f"DEBUG_RUSA: Raising EOFError: {err_msg}") # LOGGING
+        raise EOFError(err_msg)
+
+    # Handle empty string case (just a null terminator b'\x00\x00')
+    if decision_bytes == b'\x00\x00':
+        # Already consumed the null terminator with `decision_bytes` read.
         current_pos_after_null = stream.tell()
+        print(f"DEBUG_RUSA: Empty string detected. Current pos after null: {current_pos_after_null}") # LOGGING
         padding_needed = (4 - (current_pos_after_null % 4)) % 4
+        print(f"DEBUG_RUSA: Empty string padding needed: {padding_needed}") # LOGGING
+        
         if padding_needed > 0:
-            padding_bytes = stream.read(padding_needed)
-            if len(padding_bytes) < padding_needed:
-                raise EOFError(f"EOF: Expected {padding_needed} padding bytes after empty string, got {len(padding_bytes)}. Stream pos: {current_pos_after_null}")
+            bytes_available = -1
+            if hasattr(stream, 'getbuffer'): bytes_available = len(stream.getbuffer()) - current_pos_after_null
+            
+            print(f"DEBUG_RUSA: Reading empty string padding. Stream pos: {stream.tell()}, padding_needed: {padding_needed}, buffer_len (approx): {len(stream.getbuffer()) if hasattr(stream,'getbuffer') else 'N/A'}, bytes_available: {bytes_available}") # LOGGING
+            
+            if hasattr(stream, 'getbuffer') and bytes_available < padding_needed :
+                err_msg = f"EOF: Expected {padding_needed} padding bytes after empty string, but only {bytes_available} available. Stream pos: {current_pos_after_null}"
+                print(f"DEBUG_RUSA: Raising EOFError (pre-check for empty string padding): {err_msg}") # LOGGING
+                raise EOFError(err_msg)
+
+            padding_bytes_read = stream.read(padding_needed)
+            print(f"DEBUG_RUSA: Empty string padding. Read {len(padding_bytes_read)} bytes. Stream pos after read: {stream.tell()}") # LOGGING
+            if len(padding_bytes_read) < padding_needed:
+                err_msg = f"EOF: Expected {padding_needed} padding bytes after empty string, got {len(padding_bytes_read)}. Stream pos: {current_pos_after_null}"
+                print(f"DEBUG_RUSA: Raising EOFError (post-check for empty string padding): {err_msg}") # LOGGING
+                raise EOFError(err_msg)
+        print(f"DEBUG_RUSA: Returning empty string. Stream pos: {stream.tell()}") # LOGGING
         return ""
 
-    # Read non-empty string
+    # Non-empty string: Rewind decision_bytes and read char by char
+    print(f"DEBUG_RUSA: Non-empty string. Rewinding decision_bytes. Stream pos before seek: {stream.tell()}, target: {initial_stream_pos}") # LOGGING
+    stream.seek(initial_stream_pos)
+    print(f"DEBUG_RUSA: Rewound. Stream pos after seek: {stream.tell()}") # LOGGING
+    
     chars = []
     while True:
+        print(f"DEBUG_RUSA: Loop: Reading char. Stream pos: {stream.tell()}") # LOGGING
         char_bytes = stream.read(2)
-        if not char_bytes: # EOF before null terminator
-            raise EOFError(f"Unterminated unicode string: EOF encountered at offset {stream.tell()} after reading '{''.join(chars)}'.")
-        if len(char_bytes) < 2: # Short read before null terminator
-             raise EOFError(f"Unterminated unicode string: Short read (1 byte) at offset {stream.tell()} after reading '{''.join(chars)}'.")
-        
+        print(f"DEBUG_RUSA: Loop: Read {len(char_bytes)} bytes: {char_bytes!r}. Stream pos after read: {stream.tell()}") # LOGGING
+
+        if not char_bytes: # Clean EOF
+            if chars: # Unterminated string
+                err_msg = f"Unterminated unicode string: EOF encountered at offset {stream.tell()} after reading '{''.join(chars)}'."
+                print(f"DEBUG_RUSA: Raising EOFError (EOF, unterminated string): {err_msg}") # LOGGING
+                raise EOFError(err_msg)
+            else: # EOF before any char (should have been caught by initial peek or decision_bytes read if stream is non-empty)
+                print(f"DEBUG_RUSA: Returning None (EOF before any char in loop). Stream pos: {stream.tell()}") # LOGGING
+                return None # Or raise error if string is mandatory and this path is hit.
+
+        if len(char_bytes) < 2: # Short read
+            if chars: # Unterminated string with partial last char
+                err_msg = f"Unterminated unicode string: Short read (1 byte: {char_bytes!r}) at offset {stream.tell()} after reading '{''.join(chars)}'."
+                print(f"DEBUG_RUSA: Raising EOFError (short read, unterminated string): {err_msg}") # LOGGING
+                raise EOFError(err_msg)
+            else: # Short read before any char (similar to above, should be rare here)
+                err_msg = f"Short read (1 byte: {char_bytes!r}) at offset {stream.tell()} when expecting a char or null terminator."
+                print(f"DEBUG_RUSA: Raising EOFError (short read before any char in loop): {err_msg}") # LOGGING
+                raise EOFError(err_msg)
+
         if char_bytes == b'\x00\x00': # Null terminator
+            print(f"DEBUG_RUSA: Loop: Null terminator found. Stream pos: {stream.tell()}") # LOGGING
             break
         try:
             chars.append(char_bytes.decode('utf-16-le'))
         except UnicodeDecodeError as ude:
-            # This should be rare if data is valid UTF-16LE, but good to catch
-            raise UnicodeDecodeError(ude.encoding, ude.object, ude.start, ude.end, f"{ude.reason} (at stream offset {stream.tell()-2})")
+            err_msg = f"{ude.reason} (at stream offset {stream.tell()-2})"
+            print(f"DEBUG_RUSA: Raising UnicodeDecodeError: {err_msg}") # LOGGING
+            raise UnicodeDecodeError(ude.encoding, ude.object, ude.start, ude.end, err_msg)
             
     string_val = "".join(chars)
+    print(f"DEBUG_RUSA: String value: '{string_val}'") # LOGGING
     
     # Align to DWORD boundary
     current_pos_after_string_and_null = stream.tell()
+    print(f"DEBUG_RUSA: Align: Current pos after string and null: {current_pos_after_string_and_null}") # LOGGING
     padding_needed = (4 - (current_pos_after_string_and_null % 4)) % 4
+    print(f"DEBUG_RUSA: Align: Padding needed: {padding_needed}") # LOGGING
     
     if padding_needed > 0:
-        if hasattr(stream, 'getbuffer') and current_pos_after_string_and_null + padding_needed > len(stream.getbuffer()):
-             raise EOFError(f"EOF: Not enough data for alignment padding after string '{string_val}'. Expected {padding_needed} bytes at offset {current_pos_after_string_and_null}.")
-        
-        padding_bytes = stream.read(padding_needed)
-        if len(padding_bytes) < padding_needed:
-            raise EOFError(f"Short read for alignment padding after string '{string_val}'. Expected {padding_needed}, got {len(padding_bytes)} at offset {current_pos_after_string_and_null}.")
-            
+        bytes_available = -1
+        if hasattr(stream, 'getbuffer'): bytes_available = len(stream.getbuffer()) - current_pos_after_string_and_null
+
+        print(f"DEBUG_RUSA: Reading string padding. Stream pos: {stream.tell()}, padding_needed: {padding_needed}, buffer_len (approx): {len(stream.getbuffer()) if hasattr(stream,'getbuffer') else 'N/A'}, bytes_available: {bytes_available}") # LOGGING
+
+        if hasattr(stream, 'getbuffer') and bytes_available < padding_needed:
+            err_msg = f"EOF: Not enough data for alignment padding after string '{string_val}'. Expected {padding_needed}, but only {bytes_available} available. Stream pos: {current_pos_after_string_and_null}"
+            print(f"DEBUG_RUSA: Raising EOFError (pre-check for string padding): {err_msg}") # LOGGING
+            raise EOFError(err_msg)
+
+        padding_bytes_read = stream.read(padding_needed)
+        print(f"DEBUG_RUSA: String padding. Read {len(padding_bytes_read)} bytes. Stream pos after read: {stream.tell()}") # LOGGING
+        if len(padding_bytes_read) < padding_needed:
+            err_msg = f"Short read for alignment padding after string '{string_val}'. Expected {padding_needed}, got {len(padding_bytes_read)}. Stream pos: {current_pos_after_string_and_null}"
+            print(f"DEBUG_RUSA: Raising EOFError (post-check for string padding): {err_msg}") # LOGGING
+            raise EOFError(err_msg)
+    
+    print(f"DEBUG_RUSA: Returning string value: '{string_val}'. Stream pos: {stream.tell()}") # LOGGING
     return string_val
 
 def _read_word_or_string_align(stream: io.BytesIO) -> Tuple[Union[int, str, None], bool]:

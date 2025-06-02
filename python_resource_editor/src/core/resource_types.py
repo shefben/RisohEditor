@@ -149,18 +149,23 @@ class DialogResource(Resource):
             
             current_field = "Menu Name"
             menu_val, menu_is_str = _read_word_or_string_align(stream)
-            if menu_val is None and stream.tell() < len(raw_data) : raise EOFError(f"EOF or short read signaled by helper while reading {current_field}.")
+            if menu_val is None: 
+                raise EOFError(f"Failed to read {current_field} at offset {stream.tell()} due to EOF or incomplete data from helper.")
             props.menu_name = menu_val if menu_val not in ["", 0] else None
             if menu_is_str and isinstance(menu_val, str) and menu_val != "": props.symbolic_menu_name = menu_val
             
             current_field = "Class Name"
             class_val, class_is_str = _read_word_or_string_align(stream)
-            if class_val is None and stream.tell() < len(raw_data): raise EOFError(f"EOF or short read signaled by helper while reading {current_field}.")
+            if class_val is None: 
+                raise EOFError(f"Failed to read {current_field} at offset {stream.tell()} due to EOF or incomplete data from helper.")
             props.class_name = class_val if class_val not in ["", 0] else None
             if class_is_str and isinstance(class_val, str) and class_val != "": props.symbolic_class_name = class_val
             
             current_field = "Caption"
-            props.caption = _read_unicode_string_align(stream) 
+            caption_val = _read_unicode_string_align(stream)
+            if caption_val is None: # Caption is mandatory, even if empty. None here means stream ended prematurely.
+                raise EOFError(f"Failed to read {current_field} at offset {stream.tell()} due to EOF or incomplete data from helper.")
+            props.caption = caption_val
             
             if props.style & (DS_SETFONT | DS_SHELLFONT):
                 current_field = "Font PointSize"
@@ -175,7 +180,10 @@ class DialogResource(Resource):
                     props.font_weight, props.font_italic_byte, props.font_charset = struct.unpack('<HBB', font_extra_bytes); props.font_italic = bool(props.font_italic_byte)
                 
                 current_field = "Font Name"
-                props.font_name = _read_unicode_string_align(stream)
+                font_name_val = _read_unicode_string_align(stream)
+                if font_name_val is None: # If DS_SETFONT is set, font name is expected.
+                    raise EOFError(f"Failed to read {current_field} at offset {stream.tell()} due to EOF or incomplete data from helper.")
+                props.font_name = font_name_val
             
             for i in range(c_dlg_items):
                 current_field = f"Control #{i+1} alignment padding"
@@ -258,19 +266,19 @@ class DialogResource(Resource):
                                           creation_data=control_creation_data)
                 controls_list.append(ctrl)
         except EOFError as e:
-            err_msg = f"EOFError parsing dialog {repr(identifier.get_id_display())}"
+            err_msg = f"EOFError parsing dialog {repr(identifier.name_id)}"
             if 'current_field' in locals() and current_field:
                 err_msg += f" while processing field: {repr(current_field)}"
             err_msg += f" at stream offset {stream.tell() if stream else 'N/A'}: {repr(e)}"
             print(err_msg)
         except struct.error as e:
-            err_msg = f"Struct error parsing dialog {repr(identifier.get_id_display())}"
+            err_msg = f"Struct error parsing dialog {repr(identifier.name_id)}"
             if 'current_field' in locals() and current_field:
                 err_msg += f" (field hint: {repr(current_field)})"
             err_msg += f" at stream offset {stream.tell() if stream else 'N/A'}: {repr(e)}"
             print(err_msg)
         except Exception as e:
-            err_msg = f"Unexpected error parsing dialog {repr(identifier.get_id_display())}"
+            err_msg = f"Unexpected error parsing dialog {repr(identifier.name_id)}"
             if 'current_field' in locals() and current_field:
                  err_msg += f" (field hint: {repr(current_field)})"
             err_msg += f" at stream offset {stream.tell() if stream else 'N/A'}: {repr(e)}"
@@ -278,7 +286,7 @@ class DialogResource(Resource):
             import traceback; traceback.print_exc()
         
         if 'props' not in locals() or props is None : 
-            props = DialogProperties(name=identifier.name_id, caption=f"Dialog (Parse Fail for {repr(identifier.get_id_display())})")
+            props = DialogProperties(name=identifier.name_id, caption=f"Dialog (Parse Fail for {repr(identifier.name_id)})")
         return cls(identifier, properties=props, controls=controls_list)
 
     def to_rc_text(self) -> str: return generate_dialog_rc_text(self.properties, self.controls, self.identifier.language_id)

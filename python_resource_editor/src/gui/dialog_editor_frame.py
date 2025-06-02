@@ -12,7 +12,10 @@ from ..core.dialog_parser_util import (
     BUTTON_ATOM, EDIT_ATOM, STATIC_ATOM, LISTBOX_ATOM, COMBOBOX_ATOM, SCROLLBAR_ATOM, # Atoms
     WC_LISTVIEW, WC_TREEVIEW, WC_TABCONTROL, WC_PROGRESS, WC_TOOLBAR, # String class names
     WC_TRACKBAR, WC_UPDOWN, WC_DATETIMEPICK, WC_MONTHCAL, WC_IPADDRESS, WC_LINK,
-    BS_PUSHBUTTON, WS_CHILD, WS_VISIBLE, WS_TABSTOP, WS_CAPTION # For default control and style decoding
+    BS_PUSHBUTTON, WS_CHILD, WS_VISIBLE, WS_TABSTOP, WS_CAPTION, # Existing
+    # Added for on_add_control control_types:
+    ES_LEFT, WS_BORDER, WS_GROUP, LBS_STANDARD, CBS_DROPDOWNLIST, WS_VSCROLL,
+    BS_GROUPBOX, SBS_HORZ, LVS_REPORT, TVS_HASLINES, TVS_LINESATROOT, TVS_HASBUTTONS
 )
 from ..core.resource_types import DialogResource # For type hinting
 
@@ -120,11 +123,11 @@ class DialogEditorFrame(customtkinter.CTkFrame):
             if preview_widget:
                 # For CTk widgets, width/height are set at construction.
                 # For tkinter.Listbox, width/height in .place are in characters/rows.
-                if isinstance(preview_widget, (customtkinter.CTkButton, customtkinter.CTkEntry, customtkinter.CTkLabel, customtkinter.CTkComboBox, customtkinter.CTkFrame)):
+                if isinstance(preview_widget, customtkinter.CTkBaseClass): # Covers CTkButton, CTkEntry, CTkLabel, CTkComboBox, CTkFrame, CTkScrollbar etc.
                     preview_widget.place(x=control_entry.x, y=control_entry.y)
                 elif isinstance(preview_widget, tkinter.Listbox):
                     preview_widget.place(x=control_entry.x, y=control_entry.y, width=control_entry.width, height=control_entry.height) # Keep for Listbox
-                else: # Default fallback, might be for custom/other Tk widgets
+                else: # Default fallback, might be for custom/other Tk widgets (though most known are CTk or Listbox)
                     preview_widget.place(x=control_entry.x, y=control_entry.y, width=control_entry.width, height=control_entry.height)
                 
                 # Bindings for selection and dragging
@@ -167,7 +170,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         control_entry.y = new_y
         
         # Update widget placement visually
-        if isinstance(widget, (customtkinter.CTkButton, customtkinter.CTkEntry, customtkinter.CTkLabel, customtkinter.CTkComboBox, customtkinter.CTkFrame)):
+        if isinstance(widget, customtkinter.CTkBaseClass): # Covers CTkButton, CTkEntry, CTkLabel, CTkComboBox, CTkFrame, etc.
             widget.place(x=new_x, y=new_y)
         else: # Listbox or other
             widget.place(x=new_x, y=new_y, width=control_entry.width, height=control_entry.height)

@@ -1,4 +1,5 @@
 import customtkinter
+import tkinter # Added to make tkinter.Menu and tkinter.Menubutton available
 import tkinter.ttk as ttk
 from tkinter import simpledialog, messagebox
 from typing import List, Dict, Callable, Optional, Union, Tuple
