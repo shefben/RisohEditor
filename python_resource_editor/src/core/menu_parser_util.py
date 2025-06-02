@@ -49,13 +49,13 @@ MFS_HILITE = 0x00000080
 MFS_DEFAULT = 0x00001000
 # MFS_ENABLED = 0x00000000 (default state, item is enabled)
 
-    MENUEX_TEMPLATE_SIGNATURE_VERSION = 1 
-    MENUEX_HEADER_OFFSET_TO_ITEMS = 4
+MENUEX_TEMPLATE_SIGNATURE_VERSION = 1
+MENUEX_HEADER_OFFSET_TO_ITEMS = 4
 
-    # Reverse map for string to flag value, used in update_numeric_flags_from_strings
-    # This needs to be comprehensive and handle potential ambiguities if names are reused (though less common for flags).
-    # We will filter by is_ex contextually.
-    _STR_TO_FLAG_LOOKUP = {
+# Reverse map for string to flag value, used in update_numeric_flags_from_strings
+# This needs to be comprehensive and handle potential ambiguities if names are reused (though less common for flags).
+# We will filter by is_ex contextually.
+_STR_TO_FLAG_LOOKUP = {
         "STRING": MF_STRING, "SEPARATOR": MF_SEPARATOR, "POPUP": MF_POPUP, "OWNERDRAW": MF_OWNERDRAW,
         "GRAYED": MF_GRAYED, "INACTIVE": MF_DISABLED, "CHECKED": MF_CHECKED,
         "MENUBARBREAK": MF_MENUBARBREAK, "MENUBREAK": MF_MENUBREAK, "HELP": MF_HELP,

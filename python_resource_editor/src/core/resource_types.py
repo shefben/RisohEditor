@@ -910,6 +910,3 @@ def get_resource_class(type_id): return RESOURCE_TYPE_MAP.get(type_id, RCDataRes
 
 if __name__ == '__main__': 
     str_id = ResourceIdentifier(RT_STRING, name_id=1, language_id=1033); st_res = StringTableResource(str_id); st_res.add_entry(0, None, "Hello World"); print(st_res.to_rc_text()); print("-" * 20)
-
-
-[end of python_resource_editor/src/core/resource_types.py]
