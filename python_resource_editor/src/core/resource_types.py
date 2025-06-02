@@ -53,12 +53,6 @@ class StringTableResource(Resource):
     def to_rc_text(self) -> str: return generate_stringtable_rc_text(self.entries, self.identifier.language_id)
 
     def to_binary_data(self) -> bytes:
-        # StringTables are stored in blocks of 16 strings.
-        # The name of the resource (integer) determines the block number.
-        # ID = (BlockNum-1)*16 + index_in_block (0-15)
-        # Each string entry: WORD wLength (chars, not bytes), WCHAR String[wLength]
-
-        # Determine block number from identifier name
         block_num_plus_1 = 1
         if isinstance(self.identifier.name_id, int) and self.identifier.name_id > 0:
             block_num_plus_1 = self.identifier.name_id
@@ -67,11 +61,7 @@ class StringTableResource(Resource):
             if parsed_id > 0: block_num_plus_1 = parsed_id
 
         base_id = (block_num_plus_1 - 1) * 16
-
-        # Prepare a list of 16 potential strings for the block, initially empty
-        # Store (value_str, str_id) for sorting and then just value_str
         strings_in_block = ["" for _ in range(16)]
-
         for entry in self.entries:
             str_id_val = 0
             if isinstance(entry.id_val, str) and entry.id_val.isdigit():
@@ -79,23 +69,19 @@ class StringTableResource(Resource):
             elif isinstance(entry.id_val, int):
                 str_id_val = entry.id_val
             else:
-                # Cannot place string with non-numeric ID in binary stringtable
                 print(f"Warning: String with non-numeric ID '{entry.id_val}' cannot be saved to binary StringTable.")
                 continue
-
             if base_id <= str_id_val < base_id + 16:
                 index_in_block = str_id_val - base_id
                 strings_in_block[index_in_block] = entry.value_str
             else:
                 print(f"Warning: String ID {str_id_val} is outside the current block {block_num_plus_1} (range {base_id}-{base_id+15}). Skipping.")
-
         stream = io.BytesIO()
         for value_str in strings_in_block:
-            if not value_str: # Empty string or placeholder
-                stream.write(struct.pack('<H', 0)) # Length 0
+            if not value_str:
+                stream.write(struct.pack('<H', 0))
             else:
                 encoded_str = value_str.encode('utf-16-le')
-                # Length is number of characters, not bytes. Each char is 2 bytes.
                 num_chars = len(encoded_str) // 2
                 stream.write(struct.pack('<H', num_chars))
                 stream.write(encoded_str)
@@ -109,13 +95,13 @@ class StringTableResource(Resource):
             if str(entry.id_val) == str(old_id_val) or (entry.name_val and entry.name_val == str(old_id_val)): idx_to_update = i; break
         if idx_to_update != -1:
             self.entries[idx_to_update] = StringTableEntry(new_id_val, new_value_str, new_name_val); self.dirty = True
-        else: self.add_entry(new_id_val, new_name_val, new_value_str) # Or raise error
+        else: self.add_entry(new_id_val, new_name_val, new_value_str) 
     def add_entry(self, id_val: Union[int,str], name_val: Optional[str], value_str: str): # Simplified
         self.entries.append(StringTableEntry(id_val, value_str, name_val)); self.dirty = True
     def delete_entry(self, id_to_delete: Union[int,str]): # Simplified
         self.entries = [e for e in self.entries if not (str(e.id_val) == str(id_to_delete) or (e.name_val and e.name_val == str(id_to_delete)))]; self.dirty = True
 
-class DialogResource(Resource): # Unchanged from previous full file overwrite
+class DialogResource(Resource):
     def __init__(self, identifier: ResourceIdentifier, properties: Optional[DialogProperties]=None, controls: Optional[List[DialogControlEntry]]=None):
         super().__init__(identifier, data=b''); self.properties = properties or DialogProperties(name=identifier.name_id, symbolic_name=(str(identifier.name_id) if isinstance(identifier.name_id, str) else None)); self.controls = controls or []
     @classmethod
@@ -125,232 +111,220 @@ class DialogResource(Resource): # Unchanged from previous full file overwrite
         dialog_identifier = ResourceIdentifier(RT_DIALOG, props.name, text_block_res.identifier.language_id)
         props.name = dialog_identifier.name_id; props.symbolic_name = str(dialog_identifier.name_id) if isinstance(dialog_identifier.name_id, str) else None
         return cls(dialog_identifier, props, controls)
+
     @classmethod
     def parse_from_binary_data(cls, raw_data: bytes, identifier: ResourceIdentifier) -> 'DialogResource':
         from ..core.dialog_parser_util import _read_unicode_string_align, _read_word_or_string_align, ATOM_TO_CLASSNAME_MAP, DS_SETFONT, DS_SHELLFONT
-        stream = io.BytesIO(raw_data); props = DialogProperties(name=identifier.name_id, symbolic_name=(str(identifier.name_id) if isinstance(identifier.name_id, str) else None), is_ex=False); controls_list: List[DialogControlEntry] = []; c_dlg_items = 0
+        stream = io.BytesIO(raw_data)
+        props = DialogProperties(name=identifier.name_id, symbolic_name=(str(identifier.name_id) if isinstance(identifier.name_id, str) else None), is_ex=False)
+        controls_list: List[DialogControlEntry] = []
+        c_dlg_items = 0
+        i = -1 
+        current_field = "Dialog Header Signature" 
         try:
-            initial_pos = stream.tell(); sig_check_bytes = stream.read(4)
-            if len(sig_check_bytes) < 4: raise EOFError("Not enough data for dialog header.")
-            stream.seek(initial_pos); word1, word2 = struct.unpack('<HH', sig_check_bytes)
+            initial_pos = stream.tell()
+            sig_check_bytes = stream.read(4)
+            if len(sig_check_bytes) < 4: raise EOFError(f"Incomplete data for {current_field} (expected 4, got {len(sig_check_bytes)}).")
+            stream.seek(initial_pos) 
+            word1, word2 = struct.unpack('<HH', sig_check_bytes)
+
             if word1 == 1 and word2 == 0xFFFF: # DIALOGEX
-                props.is_ex = True; hdr_fmt = '<HHLLLHHHHH'; hdr_size = struct.calcsize(hdr_fmt)
-                header_data_ex_rest = stream.read(hdr_size - 4)
-                if len(header_data_ex_rest) < (hdr_size - 4): raise EOFError("Incomplete DIALOGEX header part 2.")
-                full_header_ex = sig_check_bytes + header_data_ex_rest; header_tuple_ex = struct.unpack(hdr_fmt, full_header_ex)
+                props.is_ex = True
+                hdr_fmt = '<HHLLLHHHHH' 
+                hdr_size = struct.calcsize(hdr_fmt) 
+                current_field = "DIALOGEX Header"
+                header_data = stream.read(hdr_size) 
+                if len(header_data) < hdr_size: raise EOFError(f"Incomplete data for {current_field} (expected {hdr_size}, got {len(header_data)}).")
+                header_tuple_ex = struct.unpack(hdr_fmt, header_data)
                 props.help_id = header_tuple_ex[2]; props.ex_style = header_tuple_ex[3]; props.style = header_tuple_ex[4]; c_dlg_items = header_tuple_ex[5]; props.x, props.y, props.width, props.height = header_tuple_ex[6:10]
             else: # DLGTEMPLATE
-                props.is_ex = False; hdr_fmt = '<LLHHHHH'; hdr_size = struct.calcsize(hdr_fmt)
+                props.is_ex = False
+                hdr_fmt = '<LLHHHHH' 
+                hdr_size = struct.calcsize(hdr_fmt)
+                current_field = "DLGTEMPLATE Header"
                 header_data_std = stream.read(hdr_size)
-                if len(header_data_std) < hdr_size: raise EOFError("Incomplete DLGTEMPLATE header.")
+                if len(header_data_std) < hdr_size: raise EOFError(f"Incomplete data for {current_field} (expected {hdr_size}, got {len(header_data_std)}).")
                 header_tuple_std = struct.unpack(hdr_fmt, header_data_std)
                 props.style = header_tuple_std[0]; props.ex_style = header_tuple_std[1]; c_dlg_items = header_tuple_std[2]; props.x, props.y, props.width, props.height = header_tuple_std[3:7]
-            menu_val, _ = _read_word_or_string_align(stream); props.menu_name = menu_val if menu_val not in ["", 0] else None
-            if isinstance(menu_val, str) and menu_val != "": props.symbolic_menu_name = menu_val
-            class_val, _ = _read_word_or_string_align(stream); props.class_name = class_val if class_val not in ["", 0] else None
-            if isinstance(class_val, str) and class_val != "": props.symbolic_class_name = class_val
-            props.caption = _read_unicode_string_align(stream)
-
-            if props.style & (DS_SETFONT | DS_SHELLFONT) and c_dlg_items >= 0: # c_dlg_items check seems unusual here, but keeping original logic
+            
+            current_field = "Menu Name"
+            menu_val, menu_is_str = _read_word_or_string_align(stream)
+            if menu_val is None and stream.tell() < len(raw_data) : raise EOFError(f"EOF or short read signaled by helper while reading {current_field}.")
+            props.menu_name = menu_val if menu_val not in ["", 0] else None
+            if menu_is_str and isinstance(menu_val, str) and menu_val != "": props.symbolic_menu_name = menu_val
+            
+            current_field = "Class Name"
+            class_val, class_is_str = _read_word_or_string_align(stream)
+            if class_val is None and stream.tell() < len(raw_data): raise EOFError(f"EOF or short read signaled by helper while reading {current_field}.")
+            props.class_name = class_val if class_val not in ["", 0] else None
+            if class_is_str and isinstance(class_val, str) and class_val != "": props.symbolic_class_name = class_val
+            
+            current_field = "Caption"
+            props.caption = _read_unicode_string_align(stream) 
+            
+            if props.style & (DS_SETFONT | DS_SHELLFONT):
                 current_field = "Font PointSize"
-                try:
-                    font_info_bytes = stream.read(2)
-                    if not font_info_bytes or len(font_info_bytes) < 2: raise EOFError(f"Incomplete {current_field} data.")
-                    props.font_size = struct.unpack('<H', font_info_bytes)[0]
-
-                    if props.is_ex:
-                        current_field = "DIALOGEX Font extra data (Weight, Italic, Charset)"
-                        font_extra_bytes = stream.read(4)
-                        if not font_extra_bytes or len(font_extra_bytes) < 4 : raise EOFError(f"Incomplete {current_field}.")
-                        props.font_weight, props.font_italic_byte, props.font_charset = struct.unpack('<HBB', font_extra_bytes); props.font_italic = bool(props.font_italic_byte)
-
-                    current_field = "Font Name"
-                    props.font_name = _read_unicode_string_align(stream) # This helper handles its own alignment and EOF potential
-                except EOFError as e_font:
-                    print(f"EOFError parsing dialog '{identifier.name_id}' while reading {current_field} at offset {stream.tell()}: {e_font}")
-                    # Decide if parsing should stop or continue with missing font info
-                    # For now, let it continue, props will have partial/default font info.
-                    # If c_dlg_items is 0, this might be acceptable. If >0, subsequent reads will likely fail.
-                    if i < c_dlg_items : raise # Re-raise if controls are expected, as stream is likely corrupt
-
+                font_info_bytes = stream.read(2)
+                if len(font_info_bytes) < 2: raise EOFError(f"Incomplete {current_field} data (expected 2, got {len(font_info_bytes)}).")
+                props.font_size = struct.unpack('<H', font_info_bytes)[0]
+                
+                if props.is_ex:
+                    current_field = "DIALOGEX Font extra data (Weight, Italic, Charset)"
+                    font_extra_bytes = stream.read(4)
+                    if len(font_extra_bytes) < 4 : raise EOFError(f"Incomplete {current_field} (expected 4, got {len(font_extra_bytes)}).")
+                    props.font_weight, props.font_italic_byte, props.font_charset = struct.unpack('<HBB', font_extra_bytes); props.font_italic = bool(props.font_italic_byte)
+                
+                current_field = "Font Name"
+                props.font_name = _read_unicode_string_align(stream)
+            
             for i in range(c_dlg_items):
-                current_field = f"ctrl #{i+1} alignment"
-                try:
-                    # Ensure stream is DWORD aligned before reading each DLGITEMTEMPLATE(EX)
-                    align_pos = (stream.tell() + 3) & ~3
-                    if align_pos > len(raw_data): # Check if alignment would read past EOF
-                        raise EOFError(f"Alignment seek for control #{i+1} would go past EOF (current: {stream.tell()}, align_to: {align_pos}, total: {len(raw_data)}).")
-                    if stream.tell() < align_pos : # Only seek if not already aligned or past desired point
-                         stream.seek(align_pos)
+                current_field = f"Control #{i+1} alignment padding"
+                align_pos = (stream.tell() + 3) & ~3
+                if align_pos > len(raw_data):
+                    raise EOFError(f"Alignment seek for control #{i+1} would go past EOF (current: {stream.tell()}, align_to: {align_pos}, total: {len(raw_data)}).")
+                if stream.tell() < align_pos:
+                    padding_bytes_to_read = align_pos - stream.tell()
+                    padding_read = stream.read(padding_bytes_to_read)
+                    if len(padding_read) < padding_bytes_to_read:
+                        raise EOFError(f"EOF while reading alignment padding for control #{i+1} (expected {padding_bytes_to_read}, got {len(padding_read)}).")
+                
+                if stream.tell() >= len(raw_data):
+                    print(f"Warning: Expected {c_dlg_items} controls, but found EOF at offset {stream.tell()} before reading header of control #{i+1}")
+                    break 
 
-                    if stream.tell() >= len(raw_data): # Check after alignment before reading item header
-                        print(f"Warning: Expected {c_dlg_items} controls, but found EOF at offset {stream.tell()} before reading header of control #{i+1}")
-                        break # Stop processing controls
+                item_is_ex = props.is_ex
+                help_id_ctrl, ex_style_ctrl, style_ctrl, x_ctrl, y_ctrl, w_ctrl, h_ctrl, id_ctrl = (0,0,0,0,0,0,0,0)
+                
+                if item_is_ex:
+                    current_field = f"DLGITEMTEMPLATEEX header for ctrl #{i+1}"
+                    item_hdr_fmt = '<LLLhhhhL'; item_hdr_size = struct.calcsize(item_hdr_fmt) 
+                    item_header_data = stream.read(item_hdr_size)
+                    if len(item_header_data) < item_hdr_size: raise EOFError(f"Incomplete data for {current_field} (expected {item_hdr_size}, got {len(item_header_data)}).")
+                    help_id_ctrl, ex_style_ctrl, style_ctrl, x_ctrl, y_ctrl, w_ctrl, h_ctrl, id_ctrl = struct.unpack(item_hdr_fmt, item_header_data)
+                else:
+                    current_field = f"DLGITEMTEMPLATE header for ctrl #{i+1}"
+                    item_hdr_fmt = '<LLhhhhH'; item_hdr_size = struct.calcsize(item_hdr_fmt) 
+                    item_header_data = stream.read(item_hdr_size)
+                    if len(item_header_data) < item_hdr_size: raise EOFError(f"Incomplete data for {current_field} (expected {item_hdr_size}, got {len(item_header_data)}).")
+                    style_ctrl, ex_style_ctrl, x_ctrl, y_ctrl, w_ctrl, h_ctrl, id_ctrl_word = struct.unpack(item_hdr_fmt, item_header_data); id_ctrl = id_ctrl_word
+                
+                current_field = f"Control #{i+1} Class String/Ordinal"
+                class_val_ctrl, _ = _read_word_or_string_align(stream)
+                if class_val_ctrl is None: raise EOFError(f"EOF while reading {current_field}.")
+                    
+                current_field = f"Control #{i+1} Text String/Ordinal"
+                text_val_ctrl, _ = _read_word_or_string_align(stream)
+                if text_val_ctrl is None: raise EOFError(f"EOF while reading {current_field}.")
 
-                    item_is_ex = props.is_ex
-                    help_id_ctrl, ex_style_ctrl, style_ctrl, x_ctrl, y_ctrl, w_ctrl, h_ctrl, id_ctrl = (0,0,0,0,0,0,0,0)
-
-                    current_field = f"DLGITEMTEMPLATEEX header for ctrl #{i+1}" if item_is_ex else f"DLGITEMTEMPLATE header for ctrl #{i+1}"
-                    if item_is_ex:
-                        item_hdr_fmt = '<LLLhhhhL'; item_hdr_size = struct.calcsize(item_hdr_fmt)
-                        item_header_data = stream.read(item_hdr_size)
-                        if len(item_header_data) < item_hdr_size: raise EOFError(f"Incomplete data for {current_field} (expected {item_hdr_size}, got {len(item_header_data)}).")
-                        help_id_ctrl, ex_style_ctrl, style_ctrl, x_ctrl, y_ctrl, w_ctrl, h_ctrl, id_ctrl = struct.unpack(item_hdr_fmt, item_header_data)
-                    else:
-                        item_hdr_fmt = '<LLhhhhH'; item_hdr_size = struct.calcsize(item_hdr_fmt)
-                        item_header_data = stream.read(item_hdr_size)
-                        if len(item_header_data) < item_hdr_size: raise EOFError(f"Incomplete data for {current_field} (expected {item_hdr_size}, got {len(item_header_data)}).")
-                        style_ctrl, ex_style_ctrl, x_ctrl, y_ctrl, w_ctrl, h_ctrl, id_ctrl_word = struct.unpack(item_hdr_fmt, item_header_data); id_ctrl = id_ctrl_word
-
-                    current_field = f"ctrl #{i+1} class string/ordinal"
-                    class_val_ctrl, _ = _read_word_or_string_align(stream) # Helper handles its own alignment and EOF checks
-                    current_field = f"ctrl #{i+1} text string/ordinal"
-                    text_val_ctrl, _ = _read_word_or_string_align(stream)   # Helper handles its own alignment and EOF checks
-
-                except EOFError as e_item_hdr:
-                    print(f"EOFError parsing dialog '{identifier.name_id}' while reading {current_field} at offset {stream.tell()}: {e_item_hdr}")
-                    break # Stop processing controls if header or pre-data is corrupt/missing
-
-                # Continue reading post-header fields for this control, but inside the loop's try-except
-                # This is because _read_word_or_string_align might return (None, False) on EOF instead of raising,
-                # so we check class_val_ctrl and text_val_ctrl.
-                if class_val_ctrl is None : # Indicates EOF from helper
-                    print(f"Warning: EOF or short read encountered for class of control #{i+1} in dialog '{identifier.name_id}' at offset {stream.tell()}.")
-                    break
-                if text_val_ctrl is None : # Indicates EOF from helper
-                    print(f"Warning: EOF or short read encountered for text of control #{i+1} in dialog '{identifier.name_id}' at offset {stream.tell()}.")
-                    break
-
-                class_name_str_ctrl = str(class_val_ctrl);
-                class_name_str_ctrl = str(class_val_ctrl);
+                class_name_str_ctrl = str(class_val_ctrl)
                 if isinstance(class_val_ctrl, int): class_name_str_ctrl = ATOM_TO_CLASSNAME_MAP.get(class_val_ctrl, f"0x{class_val_ctrl:04X}")
                 text_str_ctrl = str(text_val_ctrl) if isinstance(text_val_ctrl, str) else ""
-                if isinstance(class_val_ctrl, int): class_name_str_ctrl = ATOM_TO_CLASSNAME_MAP.get(class_val_ctrl, f"0x{class_val_ctrl:04X}")
-                text_str_ctrl = str(text_val_ctrl) if isinstance(text_val_ctrl, str) else ""
-
-                control_creation_data: Optional[bytes] = b'' # Default to empty bytes
+                
+                control_creation_data: Optional[bytes] = b''
                 creation_data_size = 0
-                current_field = f"ctrl #{i+1} creation data size (WORD)"
-                try:
-                    creation_data_size_bytes = stream.read(2)
-                    if not creation_data_size_bytes or len(creation_data_size_bytes) < 2:
-                        raise EOFError(f"Incomplete {current_field} (expected 2, got {len(creation_data_size_bytes if creation_data_size_bytes else b'')}).")
-                    creation_data_size = struct.unpack('<H', creation_data_size_bytes)[0]
+                
+                current_field = f"Control #{i+1} Creation Data Size (WORD)"
+                creation_data_size_bytes = stream.read(2)
+                if len(creation_data_size_bytes) < 2:
+                    raise EOFError(f"Incomplete {current_field} (expected 2, got {len(creation_data_size_bytes)}).")
+                creation_data_size = struct.unpack('<H', creation_data_size_bytes)[0]
 
-                    if item_is_ex and creation_data_size == 0xFFFF: # DIALOGEX: 0xFFFF means size is in next DWORD
-                        current_field = f"ctrl #{i+1} extended creation data size (DWORD)"
-                        actual_size_bytes = stream.read(4)
-                        if not actual_size_bytes or len(actual_size_bytes) < 4:
-                            raise EOFError(f"Incomplete {current_field} (expected 4, got {len(actual_size_bytes if actual_size_bytes else b'')}).")
-                        creation_data_size = struct.unpack('<L', actual_size_bytes)[0]
-                except EOFError as e_cd_size:
-                    print(f"EOFError parsing dialog '{identifier.name_id}' while reading {current_field} at offset {stream.tell()}: {e_cd_size}")
-                    break # Stop processing controls if creation data size is missing
-
-                # Safeguard against reading beyond EOF if creation_data_size is erroneous,
-                # including if it was adjusted to 0 from a previous error but loop continues.
+                if item_is_ex and creation_data_size == 0xFFFF:
+                    current_field = f"Control #{i+1} Extended Creation Data Size (DWORD)"
+                    actual_size_bytes = stream.read(4)
+                    if len(actual_size_bytes) < 4:
+                        raise EOFError(f"Incomplete {current_field} (expected 4, got {len(actual_size_bytes)}).")
+                    creation_data_size = struct.unpack('<L', actual_size_bytes)[0]
+                
+                current_field = f"Control #{i+1} Creation Data (size: {creation_data_size})"
                 current_stream_pos = stream.tell()
                 if current_stream_pos + creation_data_size > len(raw_data):
-                    print(f"Warning: creation_data_size ({creation_data_size}) for ctrl #{i+1} at offset {current_stream_pos} would overflow buffer (size {len(raw_data)}). Adjusting to {len(raw_data) - current_stream_pos}.")
+                    print(f"Warning: control #{i+1} creation_data_size ({creation_data_size}) at offset {current_stream_pos} would overflow buffer (size {len(raw_data)}). Adjusting to {len(raw_data) - current_stream_pos}.")
                     creation_data_size = len(raw_data) - current_stream_pos
-                    if creation_data_size < 0: creation_data_size = 0 # Should not happen but as a fallback
+                    if creation_data_size < 0: creation_data_size = 0 
 
                 if creation_data_size > 0:
                     control_creation_data = stream.read(creation_data_size)
                     if len(control_creation_data) < creation_data_size:
-                        # This warning is now more about an unexpected short read after adjustment,
-                        # or if the original size was already short but validly within buffer.
-                        print(f"Warning: Short read for creation data for ctrl #{i+1}. Expected {creation_data_size}, got {len(control_creation_data)} (stream pos: {stream.tell()}).")
-                        # Keep what was read.
-                elif creation_data_size == 0: # Explicitly handle 0 size after potential adjustment
+                        print(f"Warning: Short read for {current_field}. Expected {creation_data_size}, got {len(control_creation_data)} (stream pos: {stream.tell()}). Resource may be corrupt.")
+                elif creation_data_size == 0: 
                     control_creation_data = b''
-
 
                 ctrl = DialogControlEntry(class_name=class_name_str_ctrl, text=text_str_ctrl, id_val=id_ctrl,
                                           x=x_ctrl, y=y_ctrl, width=w_ctrl, height=h_ctrl,
                                           style=style_ctrl, ex_style=ex_style_ctrl,
                                           help_id=help_id_ctrl if item_is_ex else 0,
                                           symbolic_id_name=str(id_ctrl) if isinstance(id_ctrl, str) else None,
-                                          creation_data=control_creation_data) # Pass it here
+                                          creation_data=control_creation_data)
                 controls_list.append(ctrl)
         except EOFError as e:
-            err_msg = f"EOFError parsing dialog {repr(identifier.name_id_to_str())}"
-            if 'current_field' in locals() and current_field: # Add field context if available
+            err_msg = f"EOFError parsing dialog {repr(identifier.get_id_display())}"
+            if 'current_field' in locals() and current_field:
                 err_msg += f" while processing field: {repr(current_field)}"
             err_msg += f" at stream offset {stream.tell() if stream else 'N/A'}: {repr(e)}"
             print(err_msg)
         except struct.error as e:
-            err_msg = f"Struct error parsing dialog {repr(identifier.name_id_to_str())}"
+            err_msg = f"Struct error parsing dialog {repr(identifier.get_id_display())}"
             if 'current_field' in locals() and current_field:
                 err_msg += f" (field hint: {repr(current_field)})"
             err_msg += f" at stream offset {stream.tell() if stream else 'N/A'}: {repr(e)}"
             print(err_msg)
         except Exception as e:
-            err_msg = f"Unexpected error parsing dialog {repr(identifier.name_id_to_str())}"
+            err_msg = f"Unexpected error parsing dialog {repr(identifier.get_id_display())}"
             if 'current_field' in locals() and current_field:
                  err_msg += f" (field hint: {repr(current_field)})"
             err_msg += f" at stream offset {stream.tell() if stream else 'N/A'}: {repr(e)}"
             print(err_msg)
             import traceback; traceback.print_exc()
-
-        if 'props' not in locals() or props is None : # Ensure props exists, even if parsing failed early
-            props = DialogProperties(name=identifier.name_id, caption=f"Dialog (Parse Fail for {repr(identifier.name_id_to_str())})")
+        
+        if 'props' not in locals() or props is None : 
+            props = DialogProperties(name=identifier.name_id, caption=f"Dialog (Parse Fail for {repr(identifier.get_id_display())})")
         return cls(identifier, properties=props, controls=controls_list)
+
     def to_rc_text(self) -> str: return generate_dialog_rc_text(self.properties, self.controls, self.identifier.language_id)
 
     def _write_dialog_string_or_ordinal(self, stream: io.BytesIO, value: Union[str, int, None]):
-        if value is None: # Empty field
-            stream.write(struct.pack('<H', 0)) # Array with 0 elements
+        if value is None: 
+            stream.write(struct.pack('<H', 0)) 
         elif isinstance(value, str):
-            if not value: # Empty string
+            if not value: 
                  stream.write(struct.pack('<H', 0))
             else:
-                encoded_value = value.encode('utf-16-le') + b'\x00\x00' # Null-terminated
+                encoded_value = value.encode('utf-16-le') + b'\x00\x00' 
                 stream.write(encoded_value)
-        elif isinstance(value, int): # Ordinal
+        elif isinstance(value, int): 
             stream.write(struct.pack('<HH', 0xFFFF, value))
-        # Alignment to DWORD is handled by caller after this field if needed
+        
 
     def to_binary_data(self) -> bytes:
         from ..core.dialog_parser_util import DS_SETFONT, DS_SHELLFONT, BUTTON_ATOM, EDIT_ATOM, STATIC_ATOM, LISTBOX_ATOM, SCROLLBAR_ATOM, COMBOBOX_ATOM, CLASSNAME_TO_ATOM_MAP
         stream = io.BytesIO()
         props = self.properties
 
-        # 1. Dialog Header
         if props.is_ex:
-            # DIALOGEX_TEMPLATE_HEADER
-            # helpID (DWORD), exStyle (DWORD), style (DWORD), cDlgItems (WORD), x, y, cx, cy (all WORDs)
-            # Signature WORD 1, WORD 0xFFFF already implied by is_ex.
-            # Total: version (2) + sig (2) + help(4) + exstyle(4) + style(4) + cdit(2) + x,y,w,h (8) = 26 bytes
             header_part1 = struct.pack('<HHLLLHHHHH',
-                                     1, 0xFFFF, # dlgVer, signature
+                                     1, 0xFFFF, 
                                      props.help_id, props.ex_style, props.style,
                                      len(self.controls), props.x, props.y, props.width, props.height)
             stream.write(header_part1)
         else:
-            # DLGTEMPLATE
-            # style (DWORD), exStyle (DWORD), cDlgItems (WORD), x, y, cx, cy (all WORDs)
             header_part1 = struct.pack('<LLHHHHH',
                                      props.style, props.ex_style,
                                      len(self.controls), props.x, props.y, props.width, props.height)
             stream.write(header_part1)
 
-        # Menu Name (string or ordinal)
         self._write_dialog_string_or_ordinal(stream, props.menu_name or props.symbolic_menu_name)
         current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4
         if padding > 0: stream.write(b'\x00' * padding)
 
-        # Class Name (string or ordinal)
         self._write_dialog_string_or_ordinal(stream, props.class_name or props.symbolic_class_name)
         current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4
         if padding > 0: stream.write(b'\x00' * padding)
 
-        # Caption (string)
         stream.write(props.caption.encode('utf-16-le') + b'\x00\x00')
         current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4
         if padding > 0: stream.write(b'\x00' * padding)
 
-        # Font Info (if DS_SETFONT or DS_SHELLFONT in style)
         if props.style & (DS_SETFONT | DS_SHELLFONT):
             stream.write(struct.pack('<H', props.font_size))
             if props.is_ex:
@@ -359,64 +333,52 @@ class DialogResource(Resource): # Unchanged from previous full file overwrite
             current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4
             if padding > 0: stream.write(b'\x00' * padding)
 
-        # 2. Dialog Items (Controls)
         for ctrl in self.controls:
-            # DWORD Align each DLGITEMTEMPLATE(EX)
             current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4
             if padding > 0: stream.write(b'\x00' * padding)
 
             if props.is_ex:
-                # DLGITEMTEMPLATEEX
                 item_header = struct.pack('<LLLhhhhL',
                                           ctrl.help_id, ctrl.ex_style, ctrl.style,
                                           ctrl.x, ctrl.y, ctrl.width, ctrl.height,
-                                          ctrl.id_val if isinstance(ctrl.id_val, int) else 0) # TODO: Resolve symbolic ID
+                                          ctrl.id_val if isinstance(ctrl.id_val, int) else 0) 
                 stream.write(item_header)
             else:
-                # DLGITEMTEMPLATE
                 item_header = struct.pack('<LLhhhhH',
                                           ctrl.style, ctrl.ex_style,
                                           ctrl.x, ctrl.y, ctrl.width, ctrl.height,
-                                          ctrl.id_val if isinstance(ctrl.id_val, int) else 0) # TODO: Resolve symbolic ID
+                                          ctrl.id_val if isinstance(ctrl.id_val, int) else 0) 
                 stream.write(item_header)
 
-            # Control Class (string or atom/ordinal)
             class_to_write: Union[str, int, None] = None
             if isinstance(ctrl.class_name, str):
                 class_to_write = CLASSNAME_TO_ATOM_MAP.get(ctrl.class_name.upper(), ctrl.class_name)
-            elif isinstance(ctrl.class_name, int): # Already an atom
+            elif isinstance(ctrl.class_name, int): 
                 class_to_write = ctrl.class_name
             self._write_dialog_string_or_ordinal(stream, class_to_write)
             current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4
             if padding > 0: stream.write(b'\x00' * padding)
-
-            # Control Text (string or ordinal)
-            # For many controls, text might be empty string, or an ordinal.
-            # If ctrl.text is symbolic for an ordinal, it needs resolution. For now, assume literal.
+            
             ctrl_text_to_write: Union[str, int, None] = ctrl.text
             if isinstance(ctrl.text, str) and ctrl.text.startswith("#") and ctrl.text[1:].isdigit():
-                 ctrl_text_to_write = int(ctrl.text[1:]) # Basic ordinal parsing like #123
+                 ctrl_text_to_write = int(ctrl.text[1:]) 
             self._write_dialog_string_or_ordinal(stream, ctrl_text_to_write)
             current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4
             if padding > 0: stream.write(b'\x00' * padding)
 
-            # Creation Data
             creation_data_bytes = ctrl.creation_data if ctrl.creation_data is not None else b''
             creation_data_len = len(creation_data_bytes)
 
             if props.is_ex:
-                # For DIALOGEX, if length > 0xFFFF, write 0xFFFF then actual length as DWORD
                 if creation_data_len > 0xFFFF:
                     stream.write(struct.pack('<HL', 0xFFFF, creation_data_len))
                 else:
-                    stream.write(struct.pack('<H', creation_data_len)) # WORD for length
-            else: # Standard Dialog
-                 stream.write(struct.pack('<H', creation_data_len)) # WORD for length
+                    stream.write(struct.pack('<H', creation_data_len)) 
+            else: 
+                 stream.write(struct.pack('<H', creation_data_len)) 
 
             if creation_data_len > 0:
                 stream.write(creation_data_bytes)
-            # No specific alignment after creationdata itself, alignment is for next item.
-
         return stream.getvalue()
 
 class IconResource(Resource):
@@ -439,83 +401,44 @@ class GroupIconResource(Resource):
         entries: List[GrpIconDirEntryData] = []
         stream = io.BytesIO(raw_data)
         try:
-            # GRPICONDIR: idReserved (WORD), idType (WORD), idCount (WORD)
             id_reserved, id_type, id_count = struct.unpack('<HHH', stream.read(6))
-
-            # Validate type (1 for icon, 2 for cursor)
-            # This class is GroupIconResource, so we expect type 1 or allow type 2 if it's used for GroupCursorResource too.
-            # For strictness, one might check:
-            # if identifier.type_id == RT_GROUP_ICON and id_type != 1:
-            #     print(f"Warning: Expected icon type 1 for RT_GROUP_ICON, got {id_type}")
-            # elif identifier.type_id == RT_GROUP_CURSOR and id_type != 2:
-            #     print(f"Warning: Expected cursor type 2 for RT_GROUP_CURSOR, got {id_type}")
-
             for _ in range(id_count):
-                # GRPICONDIRENTRY: bWidth, bHeight, bColorCount, bReserved (BYTEs)
-                # wPlanes/wXHotspot, wBitCount/wYHotspot (WORDs)
-                # dwBytesInRes (DWORD), nID (WORD)
-                entry_data = stream.read(14) # 4 BYTEs + 2 WORDs + 1 DWORD + 1 WORD = 1 + 1 + 1 + 1 + 2 + 2 + 4 + 2 = 14 bytes
+                entry_data = stream.read(14) 
                 if len(entry_data) < 14:
                     print("Warning: Incomplete GRPICONDIRENTRY data.")
                     break
-
                 bW, bH, bCC, bR, wPorX, wBorY, dwBytes, nID = struct.unpack('<BBBBHHLLH', entry_data)
-                # For RT_GROUP_ICON, wPlanes and wBitCount are used.
-                # For RT_GROUP_CURSOR, wXHotspot and wYHotspot are used.
-                # The GrpIconDirEntryData stores them generically as planes_or_x, bit_count_or_y
                 entries.append(GrpIconDirEntryData(bW, bH, bCC, bR, wPorX, wBorY, dwBytes, nID))
-
         except struct.error as e:
             print(f"Struct error parsing GroupIcon/Cursor data: {e}")
         except EOFError:
             print("EOFError parsing GroupIcon/Cursor data.")
-
         return cls(identifier, entries)
 
-    def to_rc_text(self) -> str: name_str = f'"{self.identifier.name_id}"' if isinstance(self.identifier.name_id, str) else str(self.identifier.name_id); return f"{name_str} ICON \"placeholder_icon_for_{name_str}.ico\"" # Placeholder
+    def to_rc_text(self) -> str: name_str = f'"{self.identifier.name_id}"' if isinstance(self.identifier.name_id, str) else str(self.identifier.name_id); return f"{name_str} ICON \"placeholder_icon_for_{name_str}.ico\""
 
     def to_binary_data(self) -> bytes:
-        # GRPICONDIR structure:
-        #   idReserved (WORD) - always 0
-        #   idType (WORD) - 1 for icons, 2 for cursors
-        #   idCount (WORD) - number of images
-        # Then, idCount GRPICONDIRENTRY structures:
-        #   bWidth (BYTE), bHeight (BYTE), bColorCount (BYTE), bReserved (BYTE)
-        #   wPlanes (WORD) (RT_ICON) / wXHotspot (WORD) (RT_CURSOR)
-        #   wBitCount (WORD) (RT_ICON) / wYHotspot (WORD) (RT_CURSOR)
-        #   dwBytesInRes (DWORD)
-        #   nID (WORD)
-        if not self.icon_entries: return b'' # Or raise error
-
+        if not self.icon_entries: return b''
         stream = io.BytesIO()
         is_cursor_group = self.identifier.type_id == RT_GROUP_CURSOR
-
-        # GRPICONDIR header
         stream.write(struct.pack('<HHH', 0, (2 if is_cursor_group else 1), len(self.icon_entries)))
-
         for entry in self.icon_entries:
-            # Ensure entry is a dict or an object with necessary attributes
-            if not isinstance(entry, dict) and not hasattr(entry, 'width'): # Basic check
+            if not isinstance(entry, dict) and not hasattr(entry, 'width'):
                 print(f"Warning: Skipping invalid icon_entry in GroupIconResource: {entry}")
                 continue
-
             width = entry.get('width', 0) if isinstance(entry, dict) else entry.width
             height = entry.get('height', 0) if isinstance(entry, dict) else entry.height
             color_count = entry.get('color_count', 0) if isinstance(entry, dict) else entry.color_count
             reserved = entry.get('reserved', 0) if isinstance(entry, dict) else entry.reserved
-
             planes_or_x = entry.get('planes_or_x', 0) if isinstance(entry, dict) else entry.planes_or_x
             bit_count_or_y = entry.get('bit_count_or_y', 0) if isinstance(entry, dict) else entry.bit_count_or_y
-
             bytes_in_res = entry.get('bytes_in_res', 0) if isinstance(entry, dict) else entry.bytes_in_res
             icon_id = entry.get('icon_id', 0) if isinstance(entry, dict) else entry.icon_id
-
             stream.write(struct.pack('<BBBBHHLLH',
                                      width, height, color_count, reserved,
                                      planes_or_x, bit_count_or_y,
                                      bytes_in_res, icon_id))
         return stream.getvalue()
-
 
 class BitmapResource(Resource):
     def __init__(self, identifier: ResourceIdentifier, bitmap_data: bytes = b''): super().__init__(identifier, bitmap_data)
@@ -564,106 +487,63 @@ class MenuResource(Resource):
             while s.tell() < len(raw_data):
                 if s.tell() + 2 > len(raw_data): break
                 item_flags_value = struct.unpack('<H', s.read(2))[0]
-
                 item_type_str = "MENUITEM"
                 if item_flags_value & MF_POPUP: item_type_str = "POPUP"
                 elif item_flags_value & MF_SEPARATOR: item_type_str = "SEPARATOR"
-
-                # For standard menus, flags_numeric holds all MF_ flags including type and state.
-                entry = MenuItemEntry(item_type=item_type_str,
-                                      flags_numeric=item_flags_value,
-                                      is_ex=False)
-
-                # entry.flags_list is not populated here; get_flags_display_list() will derive from numeric.
+                entry = MenuItemEntry(item_type=item_type_str, flags_numeric=item_flags_value, is_ex=False)
                 flags_numeric=item_flags_value
                 if not (item_flags_value & MF_POPUP) and item_type_str != "SEPARATOR":
-                    if s.tell() + 2 > len(raw_data): break # Not enough for ID
+                    if s.tell() + 2 > len(raw_data): break 
                     entry.id_val = struct.unpack('<H', s.read(2))[0]
-
                 entry.text = _read_str_utf16_null_terminated(s)
-
                 if item_flags_value & MF_POPUP:
                     entry.children, _ = _parse_standard_items_binary_recursive(s, True)
                 current_items.append(entry)
-                if flags_numeric & MF_END and is_submenu: return current_items, True # Found MF_END for this submenu
+                if flags_numeric & MF_END and is_submenu: return current_items, True 
                 if s.tell() >= len(raw_data) and not (flags_numeric & MF_END and is_submenu) and not is_submenu: break
-            return current_items, False # False means MF_END was not encountered (for top-level or incomplete submenu)
+            return current_items, False 
 
-        def _parse_menuex_items_binary_recursive(s: io.BytesIO) -> Tuple[List[MenuItemEntry], bool]: # Returns items, and if MFR_END was seen
+        def _parse_menuex_items_binary_recursive(s: io.BytesIO) -> Tuple[List[MenuItemEntry], bool]: 
             current_items: List[MenuItemEntry] = []
             item_ended_menu = False
-            while True: # Loop until MFR_END or EOF for this level
+            while True: 
                 align_offset = s.tell() % 4
                 if align_offset != 0: s.read(4 - align_offset)
-
-                # Check if we are at the end of the stream before reading item header
-                if s.tell() + 12 > len(raw_data): break # Not enough data for a full MENUEX item header
-
+                if s.tell() + 12 > len(raw_data): break 
                 dwType, dwState, ulId, bResInfo_val = struct.unpack('<LLLH', s.read(12))
-
                 item_type_str_ex = "MENUITEM"
                 if dwType & MF_POPUP: item_type_str_ex = "POPUP"
                 elif dwType & MFT_SEPARATOR: item_type_str_ex = "SEPARATOR"
-
                 item_text_ex = _read_unicode_string_align_dword(s)
                 item_help_id = 0
                 if not (dwType & MF_POPUP) and not (dwType & MFT_SEPARATOR):
                     if s.tell() + 4 > len(raw_data): break
                     item_help_id = struct.unpack('<L', s.read(4))[0]
-
-                entry = MenuItemEntry(item_type=item_type_str_ex,
-                                      text=item_text_ex,
-                                      id_val=ulId,
-                                      is_ex=True,
-                                      type_numeric=dwType,
-                                      state_numeric=dwState,
-                                      help_id=item_help_id,
-                                      bResInfo_word=bResInfo_val)
-                # entry.flags_list is not populated here; get_flags_display_list() will derive.
-
+                entry = MenuItemEntry(item_type=item_type_str_ex, text=item_text_ex, id_val=ulId, is_ex=True, type_numeric=dwType, state_numeric=dwState, help_id=item_help_id, bResInfo_word=bResInfo_val)
                 current_items.append(entry)
-
                 if dwType & MF_POPUP:
                     children, child_ended_menu = _parse_menuex_items_binary_recursive(s)
                     entry.children = children
-                    # A POPUP ending its own list (MFR_END in its own bResInfo) also means this POPUP item itself is the last at its current level.
-                    if bResInfo & MFR_END: item_ended_menu = True; break
-                    # If child_ended_menu is true, it means the children parsing stopped due to MFR_END.
-                    # This doesn't necessarily mean the current popup itself is the last item at its level.
-
-                if bResInfo & MFR_END: # Check MFR_END on the current item
+                    if bResInfo_val & MFR_END: item_ended_menu = True; break
+                if bResInfo_val & MFR_END: 
                     item_ended_menu = True; break
-
-                # Safety break if stream position doesn't advance (e.g. repeated zero-size items or parsing error)
                 if s.tell() >= len(raw_data) : break
-
             return current_items, item_ended_menu
 
         header_data = stream.read(4)
         if len(header_data) < 4: raise EOFError("Incomplete menu header.")
-        version, header_word_2 = struct.unpack('<HH', header_data) # header_word_2 is wOffset for MENUEX, mtHeaderData for standard
-
+        version, header_word_2 = struct.unpack('<HH', header_data) 
         if version == MENUEX_TEMPLATE_SIGNATURE_VERSION and header_word_2 == MENUEX_HEADER_OFFSET_TO_ITEMS:
             is_ex = True
-            help_id_data = stream.read(4) # dwHelpId for MENUEX_TEMPLATE_HEADER
+            help_id_data = stream.read(4) 
             if len(help_id_data) < 4: raise EOFError("Incomplete MENUEX_TEMPLATE_HEADER helpID.")
             menu_global_help_id = struct.unpack('<L', help_id_data)[0]
-            items, _ = _parse_menuex_items_binary_recursive(stream) # Discard MFR_END signal for top level
-        else: # Standard Menu
+            items, _ = _parse_menuex_items_binary_recursive(stream) 
+        else: 
             is_ex = False
-            # For standard menu (MENUITEMTEMPLATEHEADER), version should be 0. header_word_2 is offset.
-            # If header_word_2 (mtHeaderData) is non-zero, it's the size of menu-specific data (rare for RT_MENU)
-            # This data would be *after* the header (version + offset words).
-            # The actual items start immediately after this header data if offset is 0.
-            # The parsing _parse_standard_items_binary_recursive expects stream to be at start of items.
-            if header_word_2 > 0: # This is mtHeaderData size, implies extra data after header
-                # This case is rare for RT_MENU, typically this is 0.
-                # If it were a menu bar definition, it could be a string.
-                # For now, we'll assume it's just padding or unhandled data if non-zero.
-                # print(f"Warning: Standard menu has non-zero mtHeaderData ({header_word_2} bytes), skipping.")
-                stream.read(header_word_2) # Skip this many bytes
-            items, _ = _parse_standard_items_binary_recursive(stream, False) # False = not a submenu initially
-
+            if header_word_2 > 0: 
+                stream.read(header_word_2) 
+            items, _ = _parse_standard_items_binary_recursive(stream, False) 
         menu_name = str(identifier.name_id) if isinstance(identifier.name_id, int) else identifier.name_id
         return cls(identifier, items=items, is_ex=is_ex, menu_name_rc=menu_name, global_help_id_rc=menu_global_help_id if is_ex else None)
 
@@ -671,67 +551,38 @@ class MenuResource(Resource):
         return generate_menu_rc_text(menu_name_rc=self.menu_name_rc, items=self.items, is_ex=self.is_ex, characteristics_rc=self.characteristics_rc, version_rc=self.version_rc, lang_id=self.identifier.language_id, global_help_id_rc=self.global_help_id_rc)
 
     def _get_numeric_flags_from_strings(self, item: MenuItemEntry, is_ex: bool) -> Tuple[int, int, int]:
-        # Returns (type_flags, state_flags, bResInfo_flags) for MENUEX
-        # or (mtOptions, 0, 0) for standard menus.
         from ..core.menu_parser_util import (MF_POPUP, MF_STRING, MF_SEPARATOR, MF_END, MF_GRAYED, MF_DISABLED, MF_CHECKED,
                                            MF_MENUBARBREAK, MF_MENUBREAK, MF_OWNERDRAW, MF_HELP,
                                            MFT_STRING, MFT_BITMAP, MFT_MENUBARBREAK, MFT_MENUBREAK,
                                            MFT_OWNERDRAW, MFT_RADIOCHECK, MFT_SEPARATOR,
                                            MFS_GRAYED, MFS_DISABLED, MFS_CHECKED, MFS_HILITE, MFS_DEFAULT,
                                            MFR_POPUP, MFR_END, FLAG_TO_STR_MAP)
-
-        # Inverse of FLAG_TO_STR_MAP might be useful, but take care with values vs keys
-        # For now, direct check based on known string flags in item.flags
-
-        type_numeric = 0
-        state_numeric = 0
-        bResInfo_numeric = 0 # Only for MENUEX's bResInfo field
-
-        # General item type determination
-        is_popup_type = item.item_type == "POPUP"
-        is_separator_type = item.item_type == "SEPARATOR"
-
+        type_numeric = 0; state_numeric = 0; bResInfo_numeric = 0
+        is_popup_type = item.item_type == "POPUP"; is_separator_type = item.item_type == "SEPARATOR"
         if is_ex:
-            # MENUEX uses dwType, dwState, bResInfo
-            if is_popup_type: type_numeric |= MF_POPUP # MFT_POPUP is MF_POPUP
+            if is_popup_type: type_numeric |= MF_POPUP 
             if is_separator_type: type_numeric |= MFT_SEPARATOR
-            # Common MFT_ flags (from item.flags derived from binary or RC)
             if "BITMAP" in item.flags: type_numeric |= MFT_BITMAP
             if "MENUBARBREAK" in item.flags: type_numeric |= MFT_MENUBARBREAK
             if "MENUBREAK" in item.flags: type_numeric |= MFT_MENUBREAK
             if "OWNERDRAW" in item.flags: type_numeric |= MFT_OWNERDRAW
-            if "RADIO" in item.flags: type_numeric |= MFT_RADIOCHECK # "RADIO" from FLAG_TO_STR_MAP
-            # MFT_STRING is 0, usually implicit if not other type.
-
-            # Common MFS_ flags
+            if "RADIO" in item.flags: type_numeric |= MFT_RADIOCHECK 
             if "CHECKED" in item.flags: state_numeric |= MFS_CHECKED
             if "DEFAULT" in item.flags: state_numeric |= MFS_DEFAULT
-            if "GRAYED" in item.flags: state_numeric |= MFS_GRAYED # MFS_GRAYED implies disabled
-            elif "INACTIVE" in item.flags: state_numeric |= MFS_DISABLED # Only if not GRAYED
+            if "GRAYED" in item.flags: state_numeric |= MFS_GRAYED 
+            elif "INACTIVE" in item.flags: state_numeric |= MFS_DISABLED 
             if "HILITE" in item.flags: state_numeric |= MFS_HILITE
-
-            # bResInfo for popups
             if is_popup_type: bResInfo_numeric |= MFR_POPUP
-            # MFR_END needs to be set by the caller (_write_menuex_items_binary_recursive) based on position
-
-        else: # Standard Menu (mtOption)
-            type_numeric = 0 # type_numeric here is mtOption
+        else: 
+            type_numeric = 0 
             if is_popup_type: type_numeric |= MF_POPUP
             if is_separator_type: type_numeric |= MF_SEPARATOR
-            # MF_STRING is 0, implicit.
-
-            # State flags for standard menus are part of mtOption
             if "GRAYED" in item.flags: type_numeric |= MF_GRAYED
-            if "INACTIVE" in item.flags: type_numeric |= MF_DISABLED # MF_DISABLED is distinct from MF_GRAYED
+            if "INACTIVE" in item.flags: type_numeric |= MF_DISABLED 
             if "CHECKED" in item.flags: type_numeric |= MF_CHECKED
             if "MENUBARBREAK" in item.flags: type_numeric |= MF_MENUBARBREAK
             if "MENUBREAK" in item.flags: type_numeric |= MF_MENUBREAK
             if "OWNERDRAW" in item.flags: type_numeric |= MF_OWNERDRAW
-            # MF_HELP is not typically a state flag in mtOption in binary, but an RC keyword.
-            # If it was parsed from RC and is in item.flags, it might be added here.
-            # However, binary parsing of standard menus doesn't usually extract MF_HELP into item.flags.
-            # For now, we assume item.flags are those that map to binary states.
-
         return type_numeric, state_numeric, bResInfo_numeric
 
     def _write_standard_items_binary_recursive(self, stream: io.BytesIO, items_list: List[MenuItemEntry]):
@@ -739,56 +590,37 @@ class MenuResource(Resource):
         num_items = len(items_list)
         for i, item in enumerate(items_list):
             mtOption, _, _ = self._get_numeric_flags_from_strings(item, is_ex=False)
-            if i == num_items - 1: # Last item in this list (popup or top-level)
-                mtOption |= MF_END
-
+            if i == num_items - 1: mtOption |= MF_END
             wId = 0
             if item.item_type != "POPUP" and item.item_type != "SEPARATOR":
                 if isinstance(item.id_val, int): wId = item.id_val
-                # TODO: Resolve symbolic ID for item.id_val if string
-
-            item_text_bytes = item.text.encode('utf-16-le') + b'\x00\x00' # Null-terminated
-
+            item_text_bytes = item.text.encode('utf-16-le') + b'\x00\x00' 
             stream.write(struct.pack('<H', mtOption))
             if not (mtOption & MF_POPUP) and item.item_type != "SEPARATOR":
                 stream.write(struct.pack('<H', wId))
             stream.write(item_text_bytes)
-
             if item.item_type == "POPUP" and item.children:
                 self._write_standard_items_binary_recursive(stream, item.children)
 
     def _write_menuex_items_binary_recursive(self, stream: io.BytesIO, items_list: List[MenuItemEntry]):
-        from ..core.menu_parser_util import MF_POPUP, MFR_END # MFR_END for bResInfo
+        from ..core.menu_parser_util import MF_POPUP, MFR_END 
         num_items = len(items_list)
         for i, item in enumerate(items_list):
-            # DWORD alignment before each item
-            current_pos = stream.tell()
-            padding = (4 - (current_pos % 4)) % 4
+            current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4
             if padding > 0: stream.write(b'\x00' * padding)
-
             dwType, dwState, bResInfo = self._get_numeric_flags_from_strings(item, is_ex=True)
-            if i == num_items - 1: # Last item in this specific list
-                bResInfo |= MFR_END
-
+            if i == num_items - 1: bResInfo |= MFR_END
             ulId = 0
-            if not (dwType & MF_POPUP) and item.item_type != "SEPARATOR": # Not POPUP or SEPARATOR
+            if not (dwType & MF_POPUP) and item.item_type != "SEPARATOR": 
                  if isinstance(item.id_val, int): ulId = item.id_val
-                 # TODO: Resolve symbolic ID
-
             item_text_bytes = item.text.encode('utf-16-le') + b'\x00\x00'
-
             stream.write(struct.pack('<LLLH', dwType, dwState, ulId, bResInfo))
             stream.write(item_text_bytes)
-
-            # DWORD align the end of the string / start of help ID
-            current_pos_after_text = stream.tell()
-            padding_after_text = (4 - (current_pos_after_text % 4)) % 4
+            current_pos_after_text = stream.tell(); padding_after_text = (4 - (current_pos_after_text % 4)) % 4
             if padding_after_text > 0: stream.write(b'\x00' * padding_after_text)
-
             if not (dwType & MF_POPUP) and item.item_type != "SEPARATOR":
                 help_id_val = item.help_id if item.help_id is not None else 0
                 stream.write(struct.pack('<L', help_id_val))
-
             if item.item_type == "POPUP" and item.children:
                 self._write_menuex_items_binary_recursive(stream, item.children)
 
@@ -796,17 +628,14 @@ class MenuResource(Resource):
         from ..core.menu_parser_util import MENUEX_TEMPLATE_SIGNATURE_VERSION, MENUEX_HEADER_OFFSET_TO_ITEMS
         stream = io.BytesIO()
         if self.is_ex:
-            # MENUEX_TEMPLATE_HEADER: wVersion (WORD), wOffset (WORD), dwHelpId (DWORD)
-            version = MENUEX_TEMPLATE_SIGNATURE_VERSION # Should be 1
-            offset = MENUEX_HEADER_OFFSET_TO_ITEMS   # Should be 4
+            version = MENUEX_TEMPLATE_SIGNATURE_VERSION 
+            offset = MENUEX_HEADER_OFFSET_TO_ITEMS   
             help_id = self.global_help_id_rc if self.global_help_id_rc is not None else 0
             stream.write(struct.pack('<HH L', version, offset, help_id))
             self._write_menuex_items_binary_recursive(stream, self.items)
         else:
-            # Standard MENUITEMTEMPLATEHEADER: versionNumber (WORD, 0), offset (WORD, 0 for RT_MENU)
-            stream.write(struct.pack('<HH', 0, 0)) # Assuming no extra header data for RT_MENU
+            stream.write(struct.pack('<HH', 0, 0)) 
             self._write_standard_items_binary_recursive(stream, self.items)
-
         return stream.getvalue()
 
 class AcceleratorResource(Resource):
@@ -838,92 +667,45 @@ class AcceleratorResource(Resource):
     def to_binary_data(self) -> bytes:
         from ..core.accelerator_parser_util import (FVIRTKEY, FSHIFT, FCONTROL, FALT, FNOINVERT, ACCEL_LAST_ENTRY_FVIRT,
                                                     VK_CODE_TO_STR_MAP)
-        # Inverse of VK_CODE_TO_STR_MAP for lookups. Handle potential duplicate names by taking first code.
         STR_TO_VK_CODE_MAP = {v: k for k, v in reversed(list(VK_CODE_TO_STR_MAP.items()))}
-
         stream = io.BytesIO()
         num_entries = len(self.entries)
-
         for i, entry in enumerate(self.entries):
-            fFlags: int = 0
-            wAscii: int = 0 # Key code
-            wId: int = 0    # Command ID
-
-            # Determine wId (Command ID)
-            if isinstance(entry.command_id, int):
-                wId = entry.command_id
-            elif isinstance(entry.command_id, str) and entry.command_id.isdigit():
-                wId = int(entry.command_id)
-            else:
-                # TODO: Need a way to resolve symbolic command ID if not already numeric
-                # For now, defaulting to 0 or trying to find it in a hypothetical global map
-                print(f"Warning: Symbolic command ID '{entry.command_id}' for accelerator not resolved to numeric. Using 0.")
-                wId = 0
-
-            # Determine fFlags and wAscii from type_flags_str and key_event_str
-            is_virt_key_type = "VIRTKEY" in entry.type_flags_str
-            is_ascii_type = "ASCII" in entry.type_flags_str
-
-            # Modifier flags
+            fFlags: int = 0; wAscii: int = 0; wId: int = 0 
+            if isinstance(entry.command_id, int): wId = entry.command_id
+            elif isinstance(entry.command_id, str) and entry.command_id.isdigit(): wId = int(entry.command_id)
+            else: print(f"Warning: Symbolic command ID '{entry.command_id}' for accelerator not resolved to numeric. Using 0."); wId = 0
+            is_virt_key_type = "VIRTKEY" in entry.type_flags_str; is_ascii_type = "ASCII" in entry.type_flags_str
             if "SHIFT" in entry.type_flags_str: fFlags |= FSHIFT
             if "CONTROL" in entry.type_flags_str: fFlags |= FCONTROL
             if "ALT" in entry.type_flags_str: fFlags |= FALT
             if "NOINVERT" in entry.type_flags_str: fFlags |= FNOINVERT
-
-            key_str = entry.key_event_str.upper() # Normalize for VK_ lookups
-
+            key_str = entry.key_event_str.upper() 
             if is_virt_key_type or (not is_ascii_type and key_str.startswith("VK_")):
                 fFlags |= FVIRTKEY
-                if key_str in STR_TO_VK_CODE_MAP:
-                    wAscii = STR_TO_VK_CODE_MAP[key_str]
-                elif key_str.startswith("VK_") and hasattr(globals(), key_str): # Check against global VK_ constants if any
-                    wAscii = globals()[key_str]
+                if key_str in STR_TO_VK_CODE_MAP: wAscii = STR_TO_VK_CODE_MAP[key_str]
+                elif key_str.startswith("VK_") and hasattr(globals(), key_str): wAscii = globals()[key_str]
                 else:
-                    try: wAscii = int(key_str) # If key_str is a number directly
-                    except ValueError:
-                        print(f"Warning: VIRTKEY '{entry.key_event_str}' not found in map or globals. Using 0.")
-                        wAscii = 0
-            elif key_str.startswith("^"): # e.g. "^A"
-                fFlags |= FVIRTKEY # RC ^X implies VIRTKEY
-                fFlags |= FCONTROL # Implicitly
-                if len(key_str) == 2 and 'A' <= key_str[1] <= 'Z':
-                     wAscii = ord(key_str[1]) # VK code for 'A' to 'Z' is same as ASCII
-                else:
-                    print(f"Warning: Unrecognized ^-key format: '{entry.key_event_str}'. Using 0.")
-                    wAscii = 0
-            else: # Presumed ASCII
-                if not is_virt_key_type: # Default to ASCII if not VIRTKEY
-                    if len(entry.key_event_str) == 1:
-                        wAscii = ord(entry.key_event_str[0])
-                    else: # Should be a single char for ASCII type if not ^X
-                        print(f"Warning: ASCII key '{entry.key_event_str}' is not a single char. Using first char or 0.")
-                        wAscii = ord(entry.key_event_str[0]) if entry.key_event_str else 0
-                else: # VIRTKEY was specified, but key string doesn't look like VK_ or ^
-                    print(f"Warning: VIRTKEY specified but key '{entry.key_event_str}' is unusual. Attempting direct char to code.")
-                    wAscii = ord(entry.key_event_str[0]) if entry.key_event_str else 0
-
-
-            # Last entry flag (ACCEL_LAST_ENTRY_FVIRT is 0x80, applied to the fFlags byte)
-            if i == num_entries - 1:
-                fFlags |= (ACCEL_LAST_ENTRY_FVIRT << 8) # Shift to high byte of WORD
-
-            # Pack and write. Ensure wAscii and fFlags are WORDs.
-            # The ACCELTABLEENTRY structure is: fFlags (WORD), wAscii (WORD), wId (WORD), wReserved (WORD, 0)
-            # fFlags here is just the low byte (fVirt from ACCEL struct), high byte is for ACCEL_LAST_ENTRY_FVIRT
-            # So, fFlags from parsing (like FSHIFT, etc.) is the low byte.
-            # ACCEL_LAST_ENTRY_FVIRT is 0x80, this needs to be in the high byte of the first WORD.
-
-            final_fFlags_word = fFlags & 0xFF # Low byte for FSHIFT etc.
-            if i == num_entries - 1:
-                 final_fFlags_word |= (ACCEL_LAST_ENTRY_FVIRT << 8)
-
-            stream.write(struct.pack('<HHHH', final_fFlags_word, wAscii, wId, 0)) # wReserved = 0
-
+                    try: wAscii = int(key_str) 
+                    except ValueError: print(f"Warning: VIRTKEY '{entry.key_event_str}' not found in map or globals. Using 0."); wAscii = 0
+            elif key_str.startswith("^"): 
+                fFlags |= FVIRTKEY; fFlags |= FCONTROL 
+                if len(key_str) == 2 and 'A' <= key_str[1] <= 'Z': wAscii = ord(key_str[1]) 
+                else: print(f"Warning: Unrecognized ^-key format: '{entry.key_event_str}'. Using 0."); wAscii = 0
+            else: 
+                if not is_virt_key_type: 
+                    if len(entry.key_event_str) == 1: wAscii = ord(entry.key_event_str[0])
+                    else: print(f"Warning: ASCII key '{entry.key_event_str}' is not a single char. Using first char or 0."); wAscii = ord(entry.key_event_str[0]) if entry.key_event_str else 0
+                else: print(f"Warning: VIRTKEY specified but key '{entry.key_event_str}' is unusual. Attempting direct char to code."); wAscii = ord(entry.key_event_str[0]) if entry.key_event_str else 0
+            if i == num_entries - 1: fFlags |= (ACCEL_LAST_ENTRY_FVIRT << 8) 
+            final_fFlags_word = fFlags & 0xFF 
+            if i == num_entries - 1: final_fFlags_word |= (ACCEL_LAST_ENTRY_FVIRT << 8)
+            stream.write(struct.pack('<HHHH', final_fFlags_word, wAscii, wId, 0)) 
         return stream.getvalue()
 
     def to_rc_text(self) -> str: name_to_use = self.table_name_rc if self.table_name_rc is not None else self.identifier.name_id; return generate_accelerator_rc_text(name_to_use, self.entries, self.identifier.language_id)
 
-class VersionInfoResource(Resource): # Unchanged (parse_from_binary_data already implemented)
+class VersionInfoResource(Resource): 
     def __init__(self, identifier: ResourceIdentifier, fixed_info: Optional[VersionFixedInfo] = None, string_tables: Optional[List[VersionStringTableInfo]] = None, var_info: Optional[List[VersionVarEntry]] = None): super().__init__(identifier, data=b''); self.fixed_info: VersionFixedInfo = fixed_info if fixed_info is not None else VersionFixedInfo(); self.string_tables: List[VersionStringTableInfo] = string_tables if string_tables is not None else []; self.var_info: List[VersionVarEntry] = var_info if var_info is not None else []
     @classmethod
     def parse_from_text_block(cls, text_block_res: TextBlockResource) -> 'VersionInfoResource':
@@ -945,7 +727,7 @@ class VersionInfoResource(Resource): # Unchanged (parse_from_binary_data already
                 if ffi_values[0] == 0xFEEF04BD:
                     fixed_info_obj = VersionFixedInfo( file_version=(((ffi_values[2] >> 16) & 0xFFFF), (ffi_values[2] & 0xFFFF), ((ffi_values[3] >> 16) & 0xFFFF), (ffi_values[3] & 0xFFFF)), product_version=(((ffi_values[4] >> 16) & 0xFFFF), (ffi_values[4] & 0xFFFF), ((ffi_values[5] >> 16) & 0xFFFF), (ffi_values[5] & 0xFFFF)), file_flags_mask=ffi_values[6], file_flags=ffi_values[7], file_os=ffi_values[8], file_type=ffi_values[9], file_subtype=ffi_values[10], file_date_ms=ffi_values[11], file_date_ls=ffi_values[12])
                 else: print("Warning: VS_FIXEDFILEINFO signature mismatch.")
-            elif vi_val_len > 0: stream.read(vi_val_len) # Skip if not 52
+            elif vi_val_len > 0: stream.read(vi_val_len) 
             current_pos_after_ffi_val = stream.tell(); padding = (4 - (current_pos_after_ffi_val % 4)) % 4
             if padding > 0: stream.read(padding)
             while stream.tell() < vi_len:
@@ -1001,117 +783,60 @@ class VersionInfoResource(Resource): # Unchanged (parse_from_binary_data already
     def to_rc_text(self) -> str: id_name = self.identifier.name_id; id_name = "VS_VERSION_INFO" if isinstance(id_name, int) and id_name == 1 else (str(id_name) if not isinstance(id_name, str) else id_name); return generate_versioninfo_rc_text(fixed_info=self.fixed_info, string_tables=self.string_tables, var_info_list=self.var_info, resource_id_name=id_name, lang_id=self.identifier.language_id)
 
     def _write_version_block(self, stream: io.BytesIO, szKey: str, wValueLength: int, wType: int, value_data: bytes = b'', children_writer_func = None):
-        """
-        Helper to write a generic version block (VS_VERSION_INFO, StringFileInfo, VarFileInfo, StringTable, Var).
-        The wLength field is backpatched after children are written.
-        """
         block_start_pos = stream.tell()
-
-        # Placeholder for wLength (WORD), wValueLength (WORD), wType (WORD)
         stream.write(struct.pack('<HHH', 0, wValueLength, wType))
-
-        # szKey (UTF-16LE, null-terminated)
         szKey_bytes = szKey.encode('utf-16-le') + b'\x00\x00'
         stream.write(szKey_bytes)
-
-        # Pad szKey to DWORD boundary
-        current_pos = stream.tell()
-        padding = (4 - (current_pos % 4)) % 4
+        current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4
         if padding > 0: stream.write(b'\x00' * padding)
-
-        # Value data (e.g., VS_FIXEDFILEINFO, or string for StringEntry, or DWORDs for Var)
         if value_data:
             stream.write(value_data)
-            # Pad value data to DWORD boundary
-            current_pos = stream.tell()
-            padding = (4 - (current_pos % 4)) % 4
+            current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4
             if padding > 0: stream.write(b'\x00' * padding)
-
-        # Children blocks (if any)
         if children_writer_func:
-            children_writer_func() # This function will make recursive calls to _write_version_block
-
-        # Calculate and backpatch wLength
-        block_end_pos = stream.tell()
-        wLength = block_end_pos - block_start_pos
-        stream.seek(block_start_pos)
-        stream.write(struct.pack('<H', wLength))
-        stream.seek(block_end_pos)
-
+            children_writer_func() 
+        block_end_pos = stream.tell(); wLength = block_end_pos - block_start_pos
+        stream.seek(block_start_pos); stream.write(struct.pack('<H', wLength)); stream.seek(block_end_pos)
 
     def to_binary_data(self) -> bytes:
         stream = io.BytesIO()
-
-        # --- VS_FIXEDFILEINFO Data ---
         fixed_file_info_data = b''
         if self.fixed_info:
             ffi = self.fixed_info
             fixed_file_info_data = struct.pack(
-                '<LLLLLLLLLLLLL', # 13 LONGs
-                0xFEEF04BD, # dwSignature
-                0x00010000, # dwStrucVersion (typically 1.0)
-                (ffi.file_version[0] << 16) | ffi.file_version[1], # dwFileVersionMS
-                (ffi.file_version[2] << 16) | ffi.file_version[3], # dwFileVersionLS
-                (ffi.product_version[0] << 16) | ffi.product_version[1], # dwProductVersionMS
-                (ffi.product_version[2] << 16) | ffi.product_version[3], # dwProductVersionLS
-                ffi.file_flags_mask,
-                ffi.file_flags,
-                ffi.file_os,
-                ffi.file_type,
-                ffi.file_subtype,
-                ffi.file_date_ms,
-                ffi.file_date_ls
+                '<LLLLLLLLLLLLL', 
+                0xFEEF04BD, 0x00010000, 
+                (ffi.file_version[0] << 16) | ffi.file_version[1], 
+                (ffi.file_version[2] << 16) | ffi.file_version[3], 
+                (ffi.product_version[0] << 16) | ffi.product_version[1], 
+                (ffi.product_version[2] << 16) | ffi.product_version[3], 
+                ffi.file_flags_mask, ffi.file_flags, ffi.file_os, ffi.file_type, ffi.file_subtype,
+                ffi.file_date_ms, ffi.file_date_ls
             )
-
         wValueLength_vs_version_info = len(fixed_file_info_data)
-
-        # --- Children Writer for VS_VERSION_INFO ---
         def write_vs_version_info_children():
-            # --- StringFileInfo Block ---
             if self.string_tables:
                 def write_sfi_children():
                     for st_table in self.string_tables:
                         def write_stringtable_children():
                             for entry in st_table.entries:
-                                # Value is the string itself, UTF-16LE, null-terminated
                                 value_bytes = entry.value.encode('utf-16-le') + b'\x00\x00'
-                                # wValueLength for string is length in WORDs, including terminator
                                 str_val_len_words = (len(value_bytes) // 2)
                                 self._write_version_block(stream, entry.key, str_val_len_words, 1, value_bytes)
-
-                        # StringTable block (e.g., "040904b0")
                         self._write_version_block(stream, st_table.lang_codepage_hex, 0, 1, children_writer_func=write_stringtable_children)
-
-                # StringFileInfo block itself
                 self._write_version_block(stream, "StringFileInfo", 0, 1, children_writer_func=write_sfi_children)
-
-            # --- VarFileInfo Block ---
             if self.var_info:
                 def write_vfi_children():
                     for var_entry in self.var_info:
                         if var_entry.key.upper() == "TRANSLATION" and var_entry.values:
-                            # Value is series of DWORDs (LangID WORD, CharsetID WORD)
                             var_data = b''
                             for i in range(0, len(var_entry.values), 2):
-                                if i + 1 < len(var_entry.values):
-                                    var_data += struct.pack('<HH', var_entry.values[i], var_entry.values[i+1])
-                                else: # Should not happen for valid Translation data
-                                    var_data += struct.pack('<H', var_entry.values[i])
-
+                                if i + 1 < len(var_entry.values): var_data += struct.pack('<HH', var_entry.values[i], var_entry.values[i+1])
+                                else: var_data += struct.pack('<H', var_entry.values[i])
                             self._write_version_block(stream, var_entry.key, len(var_data), 0, var_data)
-                        # Other Var types could be added if necessary
-
-                # VarFileInfo block itself
                 self._write_version_block(stream, "VarFileInfo", 0, 1, children_writer_func=write_vfi_children)
-
-        # --- Write the top-level VS_VERSION_INFO block ---
-        self._write_version_block(stream, "VS_VERSION_INFO",
-                                  wValueLength_vs_version_info, 0, # wType 0 for binary (because of FixedFileInfo)
-                                  fixed_file_info_data,
-                                  write_vs_version_info_children)
-
+        self._write_version_block(stream, "VS_VERSION_INFO", wValueLength_vs_version_info, 0, fixed_file_info_data, write_vs_version_info_children)
         return stream.getvalue()
-
 
 class ManifestResource(Resource):
     def __init__(self, identifier: ResourceIdentifier, manifest_text: str = ""): super().__init__(identifier); self.manifest_text = manifest_text
@@ -1120,7 +845,7 @@ class ManifestResource(Resource):
     def to_binary_data(self) -> bytes: return self.manifest_text.encode('utf-8')
     def to_rc_text(self) -> str: name_str = f'"{self.identifier.name_id}"' if isinstance(self.identifier.name_id, str) else str(self.identifier.name_id); return f"{name_str} RT_MANIFEST \"placeholder_for_{name_str}.manifest\""
 
-class HTMLResource(Resource): # Unchanged
+class HTMLResource(Resource): 
     def __init__(self, identifier: ResourceIdentifier, html_content: str = ""): super().__init__(identifier); self.html_content = html_content
     @classmethod
     def parse_from_data(cls, raw_data: bytes, identifier: ResourceIdentifier):
@@ -1132,7 +857,7 @@ class HTMLResource(Resource): # Unchanged
     def to_binary_data(self) -> bytes: return self.html_content.encode('utf-8')
     def to_rc_text(self) -> str: name_str = f'"{self.identifier.name_id}"' if isinstance(self.identifier.name_id, str) else str(self.identifier.name_id); return f"{name_str} HTML \"placeholder_for_{name_str}.html\""
 
-class RCDataResource(Resource): # Unchanged
+class RCDataResource(Resource): 
     def __init__(self, identifier: ResourceIdentifier, raw_data: bytes = b''): super().__init__(identifier, raw_data)
     @classmethod
     def parse_from_data(cls, raw_data: bytes, identifier: ResourceIdentifier): return cls(identifier, raw_data)
@@ -1146,31 +871,28 @@ class RCDataResource(Resource): # Unchanged
             lines.append(f"    {hex_values}{',' if i + 16 < len(self.data) else ''}")
         lines.append("END"); return "\n".join(lines)
 
-class CursorResource(IconResource): # Unchanged
+class CursorResource(IconResource): 
     def to_rc_text(self) -> str: name_str = f'"{self.identifier.name_id}"' if isinstance(self.identifier.name_id, str) else str(self.identifier.name_id); return f"{name_str} CURSOR \"placeholder_for_{name_str}.cur\""
 class GroupCursorResource(GroupIconResource):
-    # Inherits parse_from_data and to_binary_data from GroupIconResource.
-    # The is_cursor_group flag in to_binary_data handles the idType and field names.
-    # parse_from_data needs to correctly populate planes_or_x and bit_count_or_y as xHotspot, yHotspot.
-    def to_rc_text(self) -> str: name_str = f'"{self.identifier.name_id}"' if isinstance(self.identifier.name_id, str) else str(self.identifier.name_id); return f"{name_str} CURSOR \"placeholder_cursor_for_{name_str}.cur\"" # Placeholder
+    def to_rc_text(self) -> str: name_str = f'"{self.identifier.name_id}"' if isinstance(self.identifier.name_id, str) else str(self.identifier.name_id); return f"{name_str} CURSOR \"placeholder_cursor_for_{name_str}.cur\"" 
 
 class AniIconResource(Resource):
     def __init__(self, identifier: ResourceIdentifier, ani_icon_data: bytes = b''): super().__init__(identifier, ani_icon_data)
     @classmethod
     def parse_from_data(cls, raw_data: bytes, identifier: ResourceIdentifier): return cls(identifier, raw_data)
     def to_rc_text(self) -> str: name_str = f'"{self.identifier.name_id}"' if isinstance(self.identifier.name_id, str) else str(self.identifier.name_id); return f"{name_str} ANIICON \"placeholder_for_{name_str}.ani\""
-class AniCursorResource(Resource): # Unchanged
+class AniCursorResource(Resource): 
     def __init__(self, identifier: ResourceIdentifier, ani_cursor_data: bytes = b''): super().__init__(identifier, ani_cursor_data)
     @classmethod
     def parse_from_data(cls, raw_data: bytes, identifier: ResourceIdentifier): return cls(identifier, raw_data)
     def to_rc_text(self) -> str: name_str = f'"{self.identifier.name_id}"' if isinstance(self.identifier.name_id, str) else str(self.identifier.name_id); return f"{name_str} ANICURSOR \"placeholder_for_{name_str}.ani\""
-class DlgInitResource(Resource): # Unchanged
+class DlgInitResource(Resource): 
     def __init__(self, identifier: ResourceIdentifier, dlg_init_data: bytes = b''): super().__init__(identifier, dlg_init_data)
     @classmethod
     def parse_from_data(cls, raw_data: bytes, identifier: ResourceIdentifier): return cls(identifier, raw_data)
     def to_rc_text(self) -> str: name_str = f'"{self.identifier.name_id}"' if isinstance(self.identifier.name_id, str) else str(self.identifier.name_id); return f"{name_str} DLGINIT\nBEGIN\n    // Raw data\nEND"
 
-RESOURCE_TYPE_MAP = { # Unchanged
+RESOURCE_TYPE_MAP = { 
     RT_STRING: StringTableResource, RT_DIALOG: DialogResource, RT_ICON: IconResource, RT_GROUP_ICON: GroupIconResource,
     RT_BITMAP: BitmapResource, RT_MENU: MenuResource, RT_ACCELERATOR: AcceleratorResource, RT_VERSION: VersionInfoResource,
     RT_MANIFEST: ManifestResource, RT_HTML: HTMLResource, RT_RCDATA: RCDataResource, RT_CURSOR: CursorResource,
@@ -1178,7 +900,8 @@ RESOURCE_TYPE_MAP = { # Unchanged
 }
 def get_resource_class(type_id): return RESOURCE_TYPE_MAP.get(type_id, RCDataResource)
 
-if __name__ == '__main__': # Unchanged
+if __name__ == '__main__': 
     str_id = ResourceIdentifier(RT_STRING, name_id=1, language_id=1033); st_res = StringTableResource(str_id); st_res.add_entry(0, None, "Hello World"); print(st_res.to_rc_text()); print("-" * 20)
-    # ... other tests ...
 
+
+[end of python_resource_editor/src/core/resource_types.py]

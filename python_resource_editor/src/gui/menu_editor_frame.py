@@ -161,7 +161,7 @@ class MenuEditorFrame(customtkinter.CTkFrame):
 
         item = self.selected_menu_entry
         # Ensure string flags are up-to-date before populating UI from them
-        item.update_string_flags_from_numeric()
+        item.update_string_flags_from_numeric() 
 
         # --- Populate Properties Pane using .grid ---
         self.props_frame.grid_columnconfigure(0, weight=0) # Labels
@@ -227,14 +227,14 @@ class MenuEditorFrame(customtkinter.CTkFrame):
         if item.is_ex:
             customtkinter.CTkLabel(self.props_frame, text="Type Numeric (MFT_):").grid(row=current_row, column=0, sticky="w", padx=5, pady=2)
             type_num_entry = customtkinter.CTkEntry(self.props_frame)
-            type_num_entry.insert(0, f"0x{item.type_numeric:08X}")
+            type_num_entry.insert(0, f"0x{item.type_numeric:08X}") 
             type_num_entry.grid(row=current_row, column=1, sticky="ew", padx=5, pady=(0,5))
             self.prop_widgets['type_numeric_hex'] = type_num_entry
             current_row += 1
 
             customtkinter.CTkLabel(self.props_frame, text="State Numeric (MFS_):").grid(row=current_row, column=0, sticky="w", padx=5, pady=2)
             state_num_entry = customtkinter.CTkEntry(self.props_frame)
-            state_num_entry.insert(0, f"0x{item.state_numeric:08X}")
+            state_num_entry.insert(0, f"0x{item.state_numeric:08X}") 
             state_num_entry.grid(row=current_row, column=1, sticky="ew", padx=5, pady=(0,5))
             self.prop_widgets['state_numeric_hex'] = state_num_entry
             current_row += 1
@@ -249,7 +249,7 @@ class MenuEditorFrame(customtkinter.CTkFrame):
             customtkinter.CTkLabel(self.props_frame, text="Flags Numeric (MF_):").grid(row=current_row, column=0, sticky="w", padx=5, pady=2)
             flags_num_entry = customtkinter.CTkEntry(self.props_frame)
             # For standard menus, all flags are in type_numeric as per MenuItemEntry internal logic
-            flags_num_entry.insert(0, f"0x{item.type_numeric:04X}")
+            flags_num_entry.insert(0, f"0x{item.type_numeric:04X}") 
             flags_num_entry.grid(row=current_row, column=1, sticky="ew", padx=5, pady=(0,5))
             self.prop_widgets['flags_numeric_hex'] = flags_num_entry
             current_row += 1
@@ -353,7 +353,7 @@ class MenuEditorFrame(customtkinter.CTkFrame):
             for flag_name_key, cb_widget in self.prop_widgets['flags'].items():
                 if cb_widget.get() == 1:
                     item.flags_list.append(flag_name_key) # item.flags_list is actually item.flags in MenuItemEntry
-
+        
         # After updating flags_list from checkboxes, update numeric representations
         item.update_numeric_flags_from_strings()
 
@@ -384,7 +384,7 @@ class MenuEditorFrame(customtkinter.CTkFrame):
             except ValueError:
                 messagebox.showerror("Error", "Standard Flags Numeric must be a valid hex/decimal number.", parent=self)
                 return
-
+        
         if user_edited_numeric: # If numeric hex fields were changed by user
             item.update_string_flags_from_numeric() # Update string flags list from these new numeric values
             # This will make get_flags_display_list (used by tree) and checkbox population (if pane is re-rendered) consistent.
@@ -423,7 +423,7 @@ class MenuEditorFrame(customtkinter.CTkFrame):
                 if entry_in_map is item_entry:
                     iid_to_select = iid
                     break
-
+            
             if iid_to_select and self.menu_tree.exists(iid_to_select):
                 self.menu_tree.focus(iid_to_select)
                 self.menu_tree.selection_set(iid_to_select)
@@ -498,14 +498,14 @@ class MenuEditorFrame(customtkinter.CTkFrame):
                     if is_checked: # Visually indicate check, but it's a command item
                          # Simple way: prefix label. Or use add_checkbutton and manage var (more complex for dynamic).
                          # tk_menu_parent.add_checkbutton(label=item_entry.text, onvalue=1, offvalue=0, variable=...)
-                        tk_menu_parent.add_command(label=f"{item_entry.text} (\u2713)" if is_checked else item_entry.text,
+                        tk_menu_parent.add_command(label=f"{item_entry.text} (\u2713)" if is_checked else item_entry.text, 
                                                    command=lambda p=item_local_path: self._on_interactive_menu_item_click(p),
                                                    state=item_state)
                     else:
-                        tk_menu_parent.add_command(label=item_entry.text,
+                        tk_menu_parent.add_command(label=item_entry.text, 
                                                    command=lambda p=item_local_path: self._on_interactive_menu_item_click(p),
                                                    state=item_state)
-
+        
         if not self.menu_items:
             # Perhaps show a disabled "Empty Menu" label in the bar frame
             # empty_label = customtkinter.CTkLabel(self.interactive_menu_bar_frame, text="(No menu items to display)")
@@ -517,30 +517,30 @@ class MenuEditorFrame(customtkinter.CTkFrame):
             for top_level_idx, top_item in enumerate(self.menu_items):
                 path_str = str(top_level_idx)
                 if top_item.item_type == "POPUP":
-                    mb = tkinter.Menubutton(self.interactive_menu_bar_frame, text=top_item.text,
+                    mb = tkinter.Menubutton(self.interactive_menu_bar_frame, text=top_item.text, 
                                             relief="raised", borderwidth=1,
-                                            bg=bg_color, fg=fg_color,
+                                            bg=bg_color, fg=fg_color, 
                                             activebackground=active_bg, activeforeground=active_fg)
-                    mb.menu = tkinter.Menu(mb, tearoff=0, bg=bg_color, fg=fg_color,
+                    mb.menu = tkinter.Menu(mb, tearoff=0, bg=bg_color, fg=fg_color, 
                                            activebackground=active_bg, activeforeground=active_fg)
                     mb["menu"] = mb.menu
                     _populate_menu_recursive(mb.menu, top_item.children, path_str)
                     mb.pack(side="left", padx=1, pady=1)
                 else: # Top-level item that is not a POPUP (e.g. a single command)
                     # This is unusual for a main menubar but possible for simple menus
-                    btn = tkinter.Button(self.interactive_menu_bar_frame, text=top_item.text,
+                    btn = tkinter.Button(self.interactive_menu_bar_frame, text=top_item.text, 
                                          command=lambda p=path_str: self._on_interactive_menu_item_click(p),
                                          relief="raised", borderwidth=1,
-                                         bg=bg_color, fg=fg_color,
+                                         bg=bg_color, fg=fg_color, 
                                          activebackground=active_bg, activeforeground=active_fg)
                     if "GRAYED" in top_item.get_flags_display_list() or "INACTIVE" in top_item.get_flags_display_list():
                         btn.config(state="disabled")
                     btn.pack(side="left", padx=1, pady=1)
         elif self.menu_items: # A flat list of items, treat as a single popup menu under a default name
             default_menu_name = self.menu_resource.identifier.name_id_to_str() or "Menu"
-            mb = tkinter.Menubutton(self.interactive_menu_bar_frame, text=default_menu_name,
+            mb = tkinter.Menubutton(self.interactive_menu_bar_frame, text=default_menu_name, 
                                     relief="raised", borderwidth=1,
-                                    bg=bg_color, fg=fg_color,
+                                    bg=bg_color, fg=fg_color, 
                                     activebackground=active_bg, activeforeground=active_fg)
             mb.menu = tkinter.Menu(mb, tearoff=0, bg=bg_color, fg=fg_color,
                                    activebackground=active_bg, activeforeground=active_fg)

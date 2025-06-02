@@ -376,17 +376,17 @@ class App(customtkinter.CTk):
                     info_text_parts.append(f"Contains {len(res_obj.icon_entries)} member(s).")
                     selected_entry = None
                     best_entry_by_size = None # To find the largest if 32x32 is not present
-
+                    
                     for entry_candidate in res_obj.icon_entries:
                         # Prioritize 32x32, common size
                         if entry_candidate.width == 32 and entry_candidate.height == 32:
                             selected_entry = entry_candidate
-                            break
+                            break 
                         # Track the largest available entry as a fallback
                         if not best_entry_by_size or \
                            (entry_candidate.width * entry_candidate.height > best_entry_by_size.width * best_entry_by_size.height):
                             best_entry_by_size = entry_candidate
-
+                    
                     if not selected_entry: # If 32x32 not found, use the largest identified
                         selected_entry = best_entry_by_size
                     if not selected_entry and res_obj.icon_entries: # If still no selection (e.g. all entries were 0x0), take first
@@ -408,16 +408,16 @@ class App(customtkinter.CTk):
                                    r_search.identifier.language_id == LANG_NEUTRAL:
                                     actual_image_to_display = r_search
                                     if r_search.identifier.language_id == res_obj.identifier.language_id: # Exact lang match is best
-                                        break
-
+                                        break 
+                        
                         if actual_image_to_display and actual_image_to_display.data:
                             try:
                                 img_data_member = io.BytesIO(actual_image_to_display.data)
                                 img = Image.open(img_data_member)
-
+                                
                                 # Apply ICO/CUR frame selection logic for the member image
                                 is_member_format_ico_or_cur = (getattr(img, "format", "").upper() in ["ICO", "CUR"])
-
+                                
                                 if is_member_format_ico_or_cur and getattr(img, "n_frames", 1) > 1:
                                     target_size_from_group = (selected_entry.width, selected_entry.height) # Use selected entry's size
                                     best_frame = None
@@ -428,7 +428,7 @@ class App(customtkinter.CTk):
                                             if current_frame_candidate.size == target_size_from_group:
                                                 best_frame = current_frame_candidate; break
                                         except EOFError: break # No more frames
-
+                                    
                                     if not best_frame: # Fallback to largest if specific size not found in member's frames
                                         img.seek(0); current_best_frame_area = 0
                                         for i in range(img.n_frames):
@@ -444,7 +444,7 @@ class App(customtkinter.CTk):
                                 if img.mode not in ("RGB", "RGBA"): img = img.convert("RGBA")
                                 max_dim_display = 256 # Max display dimension in the UI
                                 if img.width > max_dim_display or img.height > max_dim_display: img.thumbnail((max_dim_display, max_dim_display))
-
+                                
                                 ctk_image = customtkinter.CTkImage(light_image=img, dark_image=img, size=(img.width, img.height))
                                 image_label = customtkinter.CTkLabel(self.editor_frame, image=ctk_image, text="")
                                 image_label.pack(padx=10, pady=10, expand=True, anchor="center"); image_label.image = ctk_image
@@ -456,17 +456,17 @@ class App(customtkinter.CTk):
                                 if actual_image_to_display.data: info_text_parts.append(f"Member Data (Hex, first 64B): {actual_image_to_display.data[:64].hex(' ', 8)}")
                         else:
                             info_text_parts.append(f"Member resource (ID: {repr(member_id_to_find)}, Type: {repr(self.get_type_display_name(expected_member_type))}) not found in loaded resources or has no data.")
-                    else:
+                    else: 
                          info_text_parts.append("Could not select a member entry from the group (e.g., group is empty or entries invalid).")
                 elif not hasattr(res_obj, 'icon_entries') or not res_obj.icon_entries : # Not a GroupIconResource or no entries
                     info_text_parts.append("Group resource has no icon/cursor entries, or is not a recognized GroupIconResource type.")
-
+                
                 # Display collected info text for group resources in a scrollable textbox for clarity
                 info_textbox = customtkinter.CTkTextbox(self.editor_frame, wrap="word", font=("monospace", 10))
                 info_textbox.pack(expand=True, fill="both", padx=5, pady=5)
                 info_textbox.insert("1.0", "\n".join(info_text_parts))
                 info_textbox.configure(state="disabled")
-                self.current_editor_widget = info_textbox
+                self.current_editor_widget = info_textbox 
                 info_text_parts = [] # Clear to prevent display by the final generic info_label
 
             elif is_image_type: # Handles RT_ICON, RT_BITMAP, RT_CURSOR (non-group)
@@ -1138,7 +1138,7 @@ class App(customtkinter.CTk):
 
     def show_treeview_context_menu(self, event):
         item_id = self.treeview.identify_row(event.y)
-
+        
         if not item_id: # Clicked on empty space
             # Configure states for empty space menu
             add_res_state = "normal" if self.current_filepath else "disabled"
@@ -1168,7 +1168,7 @@ class App(customtkinter.CTk):
             self.treeview_item_context_menu.entryconfigure("Clone to New Language...", state=item_action_state)
             self.treeview_item_context_menu.entryconfigure("Export Selected Resource As...", state=item_action_state)
             self.treeview_item_context_menu.entryconfigure("Replace Resource with Imported File...", state=item_action_state)
-
+            
             try:
                 self.treeview_item_context_menu.tk_popup(event.x_root, event.y_root)
             finally:
@@ -1224,13 +1224,13 @@ class App(customtkinter.CTk):
 
             res_obj.dirty = True
             self.set_app_dirty(True)
-
+            
             # Refresh the editor view for the selected resource
             # Store current selection, force re-selection which triggers on_treeview_select
             current_focus = self.treeview.focus()
             if current_focus:
                 self.treeview.event_generate("<<TreeviewSelect>>") # This should re-trigger on_treeview_select
-
+            
         except Exception as e:
             self.show_error_message("File Replace Error", f"Failed to replace resource content: {e}")
             import traceback
