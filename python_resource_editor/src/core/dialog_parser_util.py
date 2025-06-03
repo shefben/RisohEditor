@@ -305,104 +305,150 @@ class DialogProperties:
 # --- Binary Parsing Helper Functions ---
 def _read_unicode_string_align(stream: io.BytesIO) -> Optional[str]:
     """
-    Reads a null-terminated UTF-16LE string from the stream, then aligns
-    the stream position to the next DWORD boundary.
-    Returns the string, or None if EOF is encountered before any data/terminator.
+    Reads a null-terminated UTF-16LE string from the current stream position
+    and then reads its own DWORD alignment padding.
+    Assumes stream is already positioned at the start of the actual string data or its null terminator.
+    Returns the string, or None if EOF is hit before any characters/terminator are read.
     Raises EOFError if string is unterminated or padding is incomplete.
     """
-    initial_pos = stream.tell() # MUST BE THE FIRST EXECUTABLE LINE
+    # This function assumes the stream is positioned exactly at the start of the string data.
+    # It reads characters until a null terminator (b'\x00\x00') or EOF.
+    # Then, it reads necessary padding to align the stream to a DWORD boundary.
 
-    # Now, perform checks using the already captured initial_pos for seeks if needed.
-    # This is the logic that was developed in 'Plan 4, Step 3 / Subtask 2024-03-15T02:11:42.797Z'
-    # and reported as successful in '2024-03-15T02:21:57.142Z'
+    # Get current buffer size once, if possible, for EOF checks.
+    # Fallback if getbuffer() is not available (e.g. some stream types).
+    buffer_len = -1
+    if hasattr(stream, 'getbuffer'):
+        try:
+            buffer_len = len(stream.getbuffer())
+        except Exception: # NOSONAR
+            pass # Keep buffer_len as -1 if getbuffer fails
 
-    # Temporarily read 2 bytes to check for immediate EOF or empty string
-    decision_bytes = stream.read(2)
-
-    if not decision_bytes or len(decision_bytes) < 2: # Immediate EOF
-        stream.seek(initial_pos) # Reset to original position before returning
+    print(f"DEBUG_RUSA_UNICODE: Entry. Stream pos: {stream.tell()}, Buffer len: {buffer_len}")
+    
+    chars = []
+    
+    # Check for immediate EOF before starting loop
+    current_pos = stream.tell()
+    if buffer_len != -1 and current_pos >= buffer_len:
+        print(f"DEBUG_RUSA_UNICODE: Immediate EOF at entry. Stream pos: {current_pos}. Returning None.")
+        return None
+    if buffer_len != -1 and current_pos + 1 >= buffer_len: # Not enough for even one char (2 bytes)
+        print(f"DEBUG_RUSA_UNICODE: Not enough bytes for a char. Stream pos: {current_pos}. Returning None.")
         return None
 
-    if decision_bytes == b'\x00\x00': # Empty string
-        # Stream is now at initial_pos + 2
-        current_pos_after_null = initial_pos + 2
-        padding_needed = (4 - (current_pos_after_null % 4)) % 4
-        if padding_needed > 0:
-            # Assuming getbuffer() gives total length of underlying buffer for this check
-            # This check might be problematic if stream is not BytesIO or doesn't support getbuffer well
-            # For now, proceeding with the logic as given, but this is a potential fragility point.
-            if hasattr(stream, 'getbuffer'):
-                 bytes_available_for_padding = len(stream.getbuffer()) - current_pos_after_null
-                 if bytes_available_for_padding < padding_needed:
-                    raise EOFError(f"EOF: Expected {padding_needed} padding bytes after empty string, but only {bytes_available_for_padding} available. Stream pos: {current_pos_after_null}.")
-            
-            padding_bytes_read = stream.read(padding_needed)
-            if len(padding_bytes_read) < padding_needed: 
-                raise EOFError(f"EOF: Short read for alignment padding after empty string. Expected {padding_needed}, got {len(padding_bytes_read)}. Stream pos: {current_pos_after_null}.")
-        return ""
-
-    # If not immediate EOF and not an empty string, rewind to initial_pos to read the full string.
-    stream.seek(initial_pos)
-    
-    # Now, the main string reading loop
-    chars = []
-    # Add intense logging as per previous subtask (temporarily, for user to capture if errors persist)
-    # print(f"DEBUG_RUSA: Loop Start. Stream pos: {stream.tell()}")
     while True:
-        # print(f"DEBUG_RUSA: Loop Top. Stream pos: {stream.tell()}")
+        print(f"DEBUG_RUSA_UNICODE: String loop top. Stream pos: {stream.tell()}")
         char_bytes = stream.read(2)
-        # print(f"DEBUG_RUSA: Read 2 bytes. Got: {repr(char_bytes)}, Len: {len(char_bytes) if char_bytes else 0}. Stream pos: {stream.tell()}")
-        if not char_bytes or len(char_bytes) < 2:
+        print(f"DEBUG_RUSA_UNICODE: String loop. Read 2 bytes. Got: {repr(char_bytes)}, Len: {len(char_bytes) if char_bytes else 0}. Stream pos: {stream.tell()}")
+        
+        if not char_bytes or len(char_bytes) < 2: # EOF or short read
             if chars: # Unterminated string
+                print(f"DEBUG_RUSA_UNICODE: Unterminated string error. Read so far: '{''.join(chars)}'")
                 raise EOFError(f"Unterminated unicode string found. Read: '{''.join(chars)}'. Stream pos: {stream.tell()}")
-            else: # EOF before any character (should have been caught by initial decision_bytes check if robust)
+            else: # EOF before any character of the string was meaningfully read.
+                print(f"DEBUG_RUSA_UNICODE: String loop. EOF before any char. Returning None.")
                 return None 
         
-        if char_bytes == b'\x00\x00':
-            # print(f"DEBUG_RUSA: Null terminator found. Stream pos: {stream.tell()}")
+        if char_bytes == b'\x00\x00': # Null terminator
+            print(f"DEBUG_RUSA_UNICODE: String loop. Null terminator found. Stream pos: {stream.tell()}")
             break
-        chars.append(char_bytes.decode('utf-16-le', errors='replace')) # errors='replace' is safer
+        chars.append(char_bytes.decode('utf-16-le', errors='replace'))
 
     string_val = "".join(chars)
-    # print(f"DEBUG_RUSA: String read: '{string_val}'. Stream pos after string+null: {stream.tell()}")
+    print(f"DEBUG_RUSA_UNICODE: String read: {repr(string_val)}. Stream pos after string+null: {stream.tell()}")
 
-    # Alignment Padding for non-empty strings
+    # Alignment Padding
     current_pos_after_string_and_null = stream.tell()
     padding_needed = (4 - (current_pos_after_string_and_null % 4)) % 4
-    # print(f"DEBUG_RUSA: Padding needed: {padding_needed}. Stream pos: {current_pos_after_string_and_null}")
+    print(f"DEBUG_RUSA_UNICODE: Padding needed: {padding_needed}. Stream pos: {current_pos_after_string_and_null}")
 
     if padding_needed > 0:
-        if hasattr(stream, 'getbuffer'): # Similar check as for empty string padding
-            bytes_available_for_padding = len(stream.getbuffer()) - current_pos_after_string_and_null
-            if bytes_available_for_padding < padding_needed:
-                raise EOFError(f"EOF: Expected {padding_needed} padding bytes after string '{string_val}', but only {bytes_available_for_padding} available. Stream pos: {current_pos_after_string_and_null}.")
+        bytes_available_for_padding = (buffer_len if buffer_len != -1 else current_pos_after_string_and_null) - current_pos_after_string_and_null
+        if buffer_len != -1 : # Recalculate if getbuffer worked
+             bytes_available_for_padding = buffer_len - current_pos_after_string_and_null
+        else: # Estimate, less safe
+             bytes_available_for_padding = padding_needed
+
+        print(f"DEBUG_RUSA_UNICODE: Bytes available for padding: {bytes_available_for_padding}. Stream pos: {stream.tell()}")
+        if bytes_available_for_padding < padding_needed:
+            print(f"DEBUG_RUSA_UNICODE: EOF Error for padding. String: {repr(string_val)}, Needed: {padding_needed}, Available: {bytes_available_for_padding}")
+            raise EOFError(f"EOF: Expected {padding_needed} padding bytes after string {repr(string_val)}, but only {bytes_available_for_padding} available. Stream pos: {current_pos_after_string_and_null}.")
         
         padding_bytes = stream.read(padding_needed)
-        # print(f"DEBUG_RUSA: Read padding bytes. Got: {repr(padding_bytes)}, Len: {len(padding_bytes)}. Stream pos: {stream.tell()}")
-        if len(padding_bytes) < padding_needed:
-            raise EOFError(f"EOF: Short read for alignment padding after string '{string_val}'. Expected {padding_needed}, got {len(padding_bytes)}. Stream pos: {current_pos_after_string_and_null}.")
+        print(f"DEBUG_RUSA_UNICODE: Read padding bytes. Got: {repr(padding_bytes)}, Len: {len(padding_bytes)}. Stream pos: {stream.tell()}")
+        if len(padding_bytes) < padding_needed: # Should be caught by above, but safeguard
+            raise EOFError(f"EOF: Short read for alignment padding after string {repr(string_val)}. Expected {padding_needed}, got {len(padding_bytes)}. Stream pos: {current_pos_after_string_and_null}.")
     
-    # print(f"DEBUG_RUSA: Exit. String: '{string_val}'. Stream pos: {stream.tell()}")
+    print(f"DEBUG_RUSA_UNICODE: Exit. Returning string: {repr(string_val)}. Stream pos: {stream.tell()}")
     return string_val
 
 def _read_word_or_string_align(stream: io.BytesIO) -> Tuple[Union[int, str, None], bool]:
+    """
+    Reads a word-sized ordinal or a string from the stream, handling DWORD alignment.
+    Determines if the field is an atom (0xFFFF), an empty string marker (0x0000), 
+    or a string literal. Calls _read_unicode_string_align for string literals.
+
+    Returns:
+        Tuple[Union[int, str, None], bool]: 
+            - The value read (int for atom, str for string, None for EOF at string start).
+            - A boolean indicating if the value is a string type (True for string or None-due-to-EOF, False for atom).
+    Raises EOFError for incomplete reads of atoms or markers, or if underlying string read fails.
+    """
+    print(f"DEBUG_RUSA_WOS: Entry. Stream pos: {stream.tell()}, Total size: {len(stream.getbuffer()) if hasattr(stream, 'getbuffer') else 'N/A'}")
+    
+    initial_pos_wos = stream.tell()
+    
+    # Read the first WORD to determine type
     first_word_bytes = stream.read(2)
-    if not first_word_bytes or len(first_word_bytes) < 2 : return None, False
+    if not first_word_bytes or len(first_word_bytes) < 2:
+        print(f"DEBUG_RUSA_WOS: Immediate EOF on first_word read. Stream pos: {stream.tell()}. Returning (None, True)")
+        return None, True # True because None is a valid return for string read attempt
+
     first_word = struct.unpack('<H', first_word_bytes)[0]
-    if first_word == 0xFFFF:
+
+    if first_word == 0xFFFF: # It's an atom (ordinal)
+        print(f"DEBUG_RUSA_WOS: Atom marker 0xFFFF found. Stream pos: {stream.tell()}")
         id_bytes = stream.read(2)
-        if not id_bytes or len(id_bytes) < 2: return None, False
+        if not id_bytes or len(id_bytes) < 2:
+            print(f"DEBUG_RUSA_WOS: EOF reading atom ID. Stream pos: {stream.tell()}. Raising EOFError.")
+            raise EOFError(f"EOF while reading atom ID after 0xFFFF marker. Stream pos: {stream.tell()}")
         actual_id = struct.unpack('<H', id_bytes)[0]
-        return actual_id, False
-    elif first_word == 0x0000:
-        # This indicates an empty string for class/menu name or title.
-        # The field itself is still present and string-terminated.
-        # The _read_unicode_string_align will read the null-terminator and align.
-        stream.seek(stream.tell() - 2) # Rewind to let _read_unicode_string_align process it
-        return _read_unicode_string_align(stream), True # Will return ""
-    else:
-        stream.seek(stream.tell() - 2)
-        return _read_unicode_string_align(stream), True
+        print(f"DEBUG_RUSA_WOS: Atom ID: {actual_id}. Stream pos: {stream.tell()}. Returning ({actual_id}, False)")
+        return actual_id, False # Value is int, not string
+    
+    elif first_word == 0x0000: # Special empty string marker (for dialog menu/class)
+        # This means the string is empty. The 2 bytes b'\x00\x00' have been consumed.
+        # Now we need to handle DWORD alignment for these consumed 2 bytes.
+        print(f"DEBUG_RUSA_WOS: Empty string marker 0x0000 found. Stream pos: {stream.tell()}")
+        current_pos_after_null_marker = stream.tell() # stream is at initial_pos_wos + 2
+        padding_needed = (4 - (current_pos_after_null_marker % 4)) % 4
+        print(f"DEBUG_RUSA_WOS: Empty string marker. Padding needed: {padding_needed}. Stream pos: {current_pos_after_null_marker}")
+        if padding_needed > 0:
+            bytes_available_for_padding = (len(stream.getbuffer()) if hasattr(stream, 'getbuffer') else current_pos_after_null_marker) - current_pos_after_null_marker # Bug here if no getbuffer
+            if hasattr(stream, 'getbuffer'): # Recalculate if getbuffer is available
+                bytes_available_for_padding = len(stream.getbuffer()) - current_pos_after_null_marker
+            else: # Estimate based on assumption that we can read if needed (less safe)
+                bytes_available_for_padding = padding_needed
+            print(f"DEBUG_RUSA_WOS: Empty string marker. Bytes available for padding: {bytes_available_for_padding}.")
+            if bytes_available_for_padding < padding_needed:
+                print(f"DEBUG_RUSA_WOS: Empty string marker. EOF Error for padding. Needed: {padding_needed}, Available: {bytes_available_for_padding}")
+                raise EOFError(f"EOF: Expected {padding_needed} padding bytes after 0x0000 empty string marker, but only {bytes_available_for_padding} available. Stream pos: {current_pos_after_null_marker}.")
+            
+            padding_bytes = stream.read(padding_needed)
+            print(f"DEBUG_RUSA_WOS: Empty string marker. Read padding. Got: {repr(padding_bytes)}, Len: {len(padding_bytes)}. Stream pos: {stream.tell()}")
+            if len(padding_bytes) < padding_needed:
+                raise EOFError(f"EOF: Short read for alignment padding after 0x0000 empty string marker. Expected {padding_needed}, got {len(padding_bytes)}. Stream pos: {current_pos_after_null_marker}.")
+        print(f"DEBUG_RUSA_WOS: Empty string marker. Returning \"\". Stream pos: {stream.tell()}")
+        return "", True # Empty string, is_string=True
+        
+    else: # It's a string literal. Rewind the 2 bytes we peeked.
+        print(f"DEBUG_RUSA_WOS: Regular string detected. Rewinding from {stream.tell()} to {initial_pos_wos}.")
+        stream.seek(initial_pos_wos)
+        print(f"DEBUG_RUSA_WOS: Calling _read_unicode_string_align. Stream pos: {stream.tell()}")
+        str_val = _read_unicode_string_align(stream)
+        print(f"DEBUG_RUSA_WOS: _read_unicode_string_align returned: {repr(str_val)}. Stream pos: {stream.tell()}. Returning ({repr(str_val)}, True)")
+        return str_val, True # Value is string (or None if EOF at start of string), is_string=True
 
 
 # --- RC Text Parsing and Generation (Simplified for this subtask) ---
