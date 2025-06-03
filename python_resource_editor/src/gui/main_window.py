@@ -14,8 +14,8 @@ from typing import List, Dict, Callable, Optional, Union, Tuple
 from ..core.pe_parser import extract_resources_from_pe
 from ..core.rc_parser import RCParser
 from ..core.res_parser import parse_res_file
-from ..core.resource_base import Resource, ResourceIdentifier, FileResource, TextBlockResource
-from ..core.resource_types import StringTableResource, RCDataResource, MenuResource, DialogResource, VersionInfoResource, AcceleratorResource
+from ..core.resource_base import Resource, ResourceIdentifier, FileResource, TextBlockResource # Resource is imported
+from ..core.resource_types import StringTableResource, RCDataResource, MenuResource, DialogResource, VersionInfoResource, AcceleratorResource, get_resource_class # RCDataResource and get_resource_class are imported
 from ..utils.external_tools import run_windres_compile, WindresError, get_tool_path # Import get_tool_path
 from ..utils import image_utils
 from ..core.resource_base import (
@@ -240,23 +240,77 @@ class App(customtkinter.CTk):
             elif ext == ".res":
                 self.current_file_type = ".res" # Explicitly set
                 binary_resources = parse_res_file(filepath)
-                for res in binary_resources:
-                    if res.identifier.type_id == RT_STRING: self.resources.append(StringTableResource.parse_from_binary_data(res.data, res.identifier))
-                    elif res.identifier.type_id == RT_MENU: self.resources.append(MenuResource.parse_from_binary_data(res.data, res.identifier))
-                    elif res.identifier.type_id == RT_DIALOG: self.resources.append(DialogResource.parse_from_binary_data(res.data, res.identifier))
-                    elif res.identifier.type_id == RT_VERSION: self.resources.append(VersionInfoResource.parse_from_binary_data(res.data, res.identifier))
-                    elif res.identifier.type_id == RT_ACCELERATOR: self.resources.append(AcceleratorResource.parse_from_binary_data(res.data, res.identifier))
-                    else: self.resources.append(res)
+                for res_stub in binary_resources: # Changed to res_stub for consistency with PE loop
+                    res_identifier = res_stub.identifier
+                    res_data = res_stub.data
+                    print(f"DEBUG_MAINWINDOW: Processing RES resource, ID: {repr(res_identifier.name_id)}, Type: {res_identifier.type_id}, Lang: {res_identifier.language_id}, Size: {len(res_data) if res_data else 0}")
+                    resource_class = get_resource_class(res_identifier.type_id)
+                    print(f"DEBUG_MAINWINDOW: For {repr(res_identifier.name_id)} (Type {res_identifier.type_id}), got class {resource_class} from get_resource_class.")
+                    # Simplified parsing for .res for now, assuming direct binary data handling by class
+                    # This loop might need more specific handling similar to the PE loop if specialized parsing is required
+                    # for types that don't just store raw data (e.g., if StringTable was stored differently in .res)
+                    if hasattr(resource_class, 'parse_from_binary_data'):
+                        try:
+                            print(f"DEBUG_MAINWINDOW: Calling {resource_class.__name__}.parse_from_binary_data for {repr(res_identifier.name_id)}")
+                            parsed_resource = resource_class.parse_from_binary_data(res_data, res_identifier)
+                            self.resources.append(parsed_resource)
+                        except Exception as e_parser:
+                            print(f"CRITICAL_MAINWINDOW_PARSER_ERROR: Failed to parse resource {repr(res_identifier.name_id)} (Type {res_identifier.type_id}) from .RES using {resource_class.__name__}.parse_from_binary_data. Error: {repr(e_parser)}. Appending as raw RCDataResource.")
+                            self.resources.append(RCDataResource(res_identifier, res_data))
+                    else:
+                        print(f"DEBUG_MAINWINDOW: No parse_from_binary_data for {resource_class.__name__} for .RES resource {repr(res_identifier.name_id)}. Appending as raw RCDataResource.")
+                        self.resources.append(RCDataResource(res_identifier, res_data)) # Default for .res if no specific binary parser
+
             elif ext in [".exe", ".dll", ".ocx", ".sys", ".scr", ".cpl", ".ime", ".mui"]:
                 self.current_file_type = "PE" # Use generic "PE" type
                 pe_resources = extract_resources_from_pe(filepath)
-                for res in pe_resources:
-                    if res.identifier.type_id == RT_STRING: self.resources.append(StringTableResource.parse_from_binary_data(res.data, res.identifier))
-                    elif res.identifier.type_id == RT_MENU: self.resources.append(MenuResource.parse_from_binary_data(res.data, res.identifier))
-                    elif res.identifier.type_id == RT_DIALOG: self.resources.append(DialogResource.parse_from_binary_data(res.data, res.identifier))
-                    elif res.identifier.type_id == RT_VERSION: self.resources.append(VersionInfoResource.parse_from_binary_data(res.data, res.identifier))
-                    elif res.identifier.type_id == RT_ACCELERATOR: self.resources.append(AcceleratorResource.parse_from_binary_data(res.data, res.identifier))
-                    else: self.resources.append(res)
+
+                for res_idx, res_stub in enumerate(pe_resources): # res_stub is a basic Resource with data
+                    res_identifier = res_stub.identifier
+                    res_data = res_stub.data
+
+                    print(f"DEBUG_MAINWINDOW: Processing PE resource index {res_idx}, ID: {repr(res_identifier.name_id)}, Type: {res_identifier.type_id}, Lang: {res_identifier.language_id}, Size: {len(res_data) if res_data else 0}")
+
+                    resource_class = get_resource_class(res_identifier.type_id)
+                    print(f"DEBUG_MAINWINDOW: For {repr(res_identifier.name_id)} (Type {res_identifier.type_id}), got class {resource_class} from get_resource_class.")
+
+                    parsed_resource = None
+                    if hasattr(resource_class, 'parse_from_binary_data'):
+                        try:
+                            print(f"DEBUG_MAINWINDOW: Calling {resource_class.__name__}.parse_from_binary_data for {repr(res_identifier.name_id)}")
+                            parsed_resource = resource_class.parse_from_binary_data(res_data, res_identifier)
+                        except Exception as e_parser:
+                            print(f"CRITICAL_MAINWINDOW_PARSER_ERROR: Failed to parse resource {repr(res_identifier.name_id)} (Type {res_identifier.type_id}) using {resource_class.__name__}.parse_from_binary_data. Error: {repr(e_parser)}. Falling back to RCDataResource.")
+                            # Fallback to RCDataResource if specialized parser fails
+                            parsed_resource = RCDataResource(res_identifier, res_data)
+                    elif hasattr(resource_class, 'parse_from_data'): # Generic parse_from_data (e.g. for text-based manifest/html from raw)
+                        try:
+                            print(f"DEBUG_MAINWINDOW: Calling {resource_class.__name__}.parse_from_data for {repr(res_identifier.name_id)}")
+                            parsed_resource = resource_class.parse_from_data(res_data, res_identifier)
+                        except Exception as e_parser:
+                            print(f"CRITICAL_MAINWINDOW_PARSER_ERROR: Failed to parse resource {repr(res_identifier.name_id)} (Type {res_identifier.type_id}) using {resource_class.__name__}.parse_from_data. Error: {repr(e_parser)}. Falling back to RCDataResource.")
+                            parsed_resource = RCDataResource(res_identifier, res_data)
+                    else: # No specific parser, treat as RCData or basic Resource
+                        print(f"DEBUG_MAINWINDOW: No specific binary/data parser for class {resource_class.__name__} for {repr(res_identifier.name_id)}. Using direct instantiation or RCDataResource.")
+                        if resource_class == RCDataResource: # If get_resource_class already defaulted
+                             parsed_resource = RCDataResource(res_identifier, res_data)
+                        elif resource_class == Resource: # Base resource, just stores data
+                             parsed_resource = Resource(res_identifier, res_data)
+                        else: # It's some other specific class that doesn't use parse_from_binary_data (e.g. might take data in __init__)
+                             try:
+                                 print(f"DEBUG_MAINWINDOW: Attempting direct instantiation of {resource_class.__name__} for {repr(res_identifier.name_id)}")
+                                 parsed_resource = resource_class(res_identifier, res_data) # Assumes __init__(self, identifier, data) signature
+                             except Exception as e_instantiate:
+                                 print(f"CRITICAL_MAINWINDOW_INSTANTIATE_ERROR: Failed to instantiate {resource_class.__name__} for {repr(res_identifier.name_id)}. Error: {repr(e_instantiate)}. Falling back to RCDataResource.")
+                                 parsed_resource = RCDataResource(res_identifier, res_data)
+
+                    if parsed_resource:
+                        self.resources.append(parsed_resource)
+                    else:
+                        # This case should ideally be minimized by fallbacks above.
+                        print(f"CRITICAL_MAINWINDOW_ERROR: No resource object created for {repr(res_identifier.name_id)} (Type {res_identifier.type_id}). Appending as raw RCDataResource.")
+                        self.resources.append(RCDataResource(res_identifier, res_data))
+
             else:
                 self.current_file_type = None # Unknown
                 self.show_error_message("Unsupported File Type", f"The file type '{ext}' is not currently supported for opening.")
@@ -376,17 +430,17 @@ class App(customtkinter.CTk):
                     info_text_parts.append(f"Contains {len(res_obj.icon_entries)} member(s).")
                     selected_entry = None
                     best_entry_by_size = None # To find the largest if 32x32 is not present
-                    
+
                     for entry_candidate in res_obj.icon_entries:
                         # Prioritize 32x32, common size
                         if entry_candidate.width == 32 and entry_candidate.height == 32:
                             selected_entry = entry_candidate
-                            break 
+                            break
                         # Track the largest available entry as a fallback
                         if not best_entry_by_size or \
                            (entry_candidate.width * entry_candidate.height > best_entry_by_size.width * best_entry_by_size.height):
                             best_entry_by_size = entry_candidate
-                    
+
                     if not selected_entry: # If 32x32 not found, use the largest identified
                         selected_entry = best_entry_by_size
                     if not selected_entry and res_obj.icon_entries: # If still no selection (e.g. all entries were 0x0), take first
@@ -408,16 +462,16 @@ class App(customtkinter.CTk):
                                    r_search.identifier.language_id == LANG_NEUTRAL:
                                     actual_image_to_display = r_search
                                     if r_search.identifier.language_id == res_obj.identifier.language_id: # Exact lang match is best
-                                        break 
-                        
+                                        break
+
                         if actual_image_to_display and actual_image_to_display.data:
                             try:
                                 img_data_member = io.BytesIO(actual_image_to_display.data)
                                 img = Image.open(img_data_member)
-                                
+
                                 # Apply ICO/CUR frame selection logic for the member image
                                 is_member_format_ico_or_cur = (getattr(img, "format", "").upper() in ["ICO", "CUR"])
-                                
+
                                 if is_member_format_ico_or_cur and getattr(img, "n_frames", 1) > 1:
                                     target_size_from_group = (selected_entry.width, selected_entry.height) # Use selected entry's size
                                     best_frame = None
@@ -428,7 +482,7 @@ class App(customtkinter.CTk):
                                             if current_frame_candidate.size == target_size_from_group:
                                                 best_frame = current_frame_candidate; break
                                         except EOFError: break # No more frames
-                                    
+
                                     if not best_frame: # Fallback to largest if specific size not found in member's frames
                                         img.seek(0); current_best_frame_area = 0
                                         for i in range(img.n_frames):
@@ -444,7 +498,7 @@ class App(customtkinter.CTk):
                                 if img.mode not in ("RGB", "RGBA"): img = img.convert("RGBA")
                                 max_dim_display = 256 # Max display dimension in the UI
                                 if img.width > max_dim_display or img.height > max_dim_display: img.thumbnail((max_dim_display, max_dim_display))
-                                
+
                                 ctk_image = customtkinter.CTkImage(light_image=img, dark_image=img, size=(img.width, img.height))
                                 image_label = customtkinter.CTkLabel(self.editor_frame, image=ctk_image, text="")
                                 image_label.pack(padx=10, pady=10, expand=True, anchor="center"); image_label.image = ctk_image
@@ -456,17 +510,17 @@ class App(customtkinter.CTk):
                                 if actual_image_to_display.data: info_text_parts.append(f"Member Data (Hex, first 64B): {actual_image_to_display.data[:64].hex(' ', 8)}")
                         else:
                             info_text_parts.append(f"Member resource (ID: {repr(member_id_to_find)}, Type: {repr(self.get_type_display_name(expected_member_type))}) not found in loaded resources or has no data.")
-                    else: 
+                    else:
                          info_text_parts.append("Could not select a member entry from the group (e.g., group is empty or entries invalid).")
                 elif not hasattr(res_obj, 'icon_entries') or not res_obj.icon_entries : # Not a GroupIconResource or no entries
                     info_text_parts.append("Group resource has no icon/cursor entries, or is not a recognized GroupIconResource type.")
-                
+
                 # Display collected info text for group resources in a scrollable textbox for clarity
                 info_textbox = customtkinter.CTkTextbox(self.editor_frame, wrap="word", font=("monospace", 10))
                 info_textbox.pack(expand=True, fill="both", padx=5, pady=5)
                 info_textbox.insert("1.0", "\n".join(info_text_parts))
                 info_textbox.configure(state="disabled")
-                self.current_editor_widget = info_textbox 
+                self.current_editor_widget = info_textbox
                 info_text_parts = [] # Clear to prevent display by the final generic info_label
 
             elif is_image_type: # Handles RT_ICON, RT_BITMAP, RT_CURSOR (non-group)
@@ -475,7 +529,7 @@ class App(customtkinter.CTk):
                     if isinstance(res_obj, FileResource):
                         if res_obj.data is None:
                             try:
-                                base_dir = os.path.dirname(self.current_filepath) if self.current_filepath else ""
+                                base_dir = os.path.dirname(self.current_filepath or "." )
                                 res_obj.load_data(base_dir=base_dir)
                             except Exception as load_err:
                                 raise UnidentifiedImageError(f"Could not load image file {res_obj.filepath}: {load_err}")
@@ -1138,7 +1192,7 @@ class App(customtkinter.CTk):
 
     def show_treeview_context_menu(self, event):
         item_id = self.treeview.identify_row(event.y)
-        
+
         if not item_id: # Clicked on empty space
             # Configure states for empty space menu
             add_res_state = "normal" if self.current_filepath else "disabled"
@@ -1168,7 +1222,7 @@ class App(customtkinter.CTk):
             self.treeview_item_context_menu.entryconfigure("Clone to New Language...", state=item_action_state)
             self.treeview_item_context_menu.entryconfigure("Export Selected Resource As...", state=item_action_state)
             self.treeview_item_context_menu.entryconfigure("Replace Resource with Imported File...", state=item_action_state)
-            
+
             try:
                 self.treeview_item_context_menu.tk_popup(event.x_root, event.y_root)
             finally:
@@ -1224,13 +1278,13 @@ class App(customtkinter.CTk):
 
             res_obj.dirty = True
             self.set_app_dirty(True)
-            
+
             # Refresh the editor view for the selected resource
             # Store current selection, force re-selection which triggers on_treeview_select
             current_focus = self.treeview.focus()
             if current_focus:
                 self.treeview.event_generate("<<TreeviewSelect>>") # This should re-trigger on_treeview_select
-            
+
         except Exception as e:
             self.show_error_message("File Replace Error", f"Failed to replace resource content: {e}")
             import traceback
@@ -1242,4 +1296,3 @@ if __name__ == '__main__':
     customtkinter.set_default_color_theme("blue")
     app = App()
     app.mainloop()
-

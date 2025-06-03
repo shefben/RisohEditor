@@ -76,7 +76,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                 cn_str = ATOM_TO_CLASSNAME_MAP.get(control_entry.class_name, f"ATOM_0x{control_entry.class_name:04X}").upper()
             elif isinstance(control_entry.class_name, str):
                 cn_str = control_entry.class_name.upper()
-            
+
             # --- TEMPORARY DEBUG PRINT ---
             print(f"Control Class Normalized: '{cn_str}', Original: {repr(control_entry.class_name)}, Text: '{control_entry.text}', ID: {control_entry.get_id_display()}")
             # --- END TEMPORARY DEBUG PRINT ---
@@ -129,25 +129,25 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                     preview_widget.place(x=control_entry.x, y=control_entry.y, width=control_entry.width, height=control_entry.height) # Keep for Listbox
                 else: # Default fallback, might be for custom/other Tk widgets (though most known are CTk or Listbox)
                     preview_widget.place(x=control_entry.x, y=control_entry.y, width=control_entry.width, height=control_entry.height)
-                
+
                 # Bindings for selection and dragging
                 preview_widget.bind("<Button-1>", lambda e, widget=preview_widget, ctrl=control_entry: self.on_control_drag_start(e, widget, ctrl))
                 preview_widget.bind("<B1-Motion>", lambda e, widget=preview_widget, ctrl=control_entry: self.on_control_drag(e, widget, ctrl))
                 preview_widget.bind("<ButtonRelease-1>", lambda e, widget=preview_widget, ctrl=control_entry: self.on_control_drag_release(e, widget, ctrl))
-                
+
                 self.preview_widgets[control_entry] = preview_widget
 
     def on_control_drag_start(self, event, widget: Union[customtkinter.CTkBaseClass, tkinter.Listbox], control_entry: DialogControlEntry):
         self.on_control_selected_on_preview(control_entry) # Select the control first
-        
+
         # Record initial properties for dragging
         self._drag_data["widget"] = widget
         self._drag_data["control_entry"] = control_entry
         # Position of the widget itself on the canvas
-        self._drag_data["start_x_widget"] = control_entry.x 
+        self._drag_data["start_x_widget"] = control_entry.x
         self._drag_data["start_y_widget"] = control_entry.y
         # Mouse position relative to root window (for calculating delta)
-        self._drag_data["start_x_event_root"] = event.x_root 
+        self._drag_data["start_x_event_root"] = event.x_root
         self._drag_data["start_y_event_root"] = event.y_root
 
 
@@ -157,7 +157,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
 
         delta_x = event.x_root - self._drag_data["start_x_event_root"]
         delta_y = event.y_root - self._drag_data["start_y_event_root"]
-        
+
         new_x = self._drag_data["start_x_widget"] + delta_x
         new_y = self._drag_data["start_y_widget"] + delta_y
 
@@ -168,7 +168,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
 
         control_entry.x = new_x
         control_entry.y = new_y
-        
+
         # Update widget placement visually
         if isinstance(widget, customtkinter.CTkBaseClass): # Covers CTkButton, CTkEntry, CTkLabel, CTkComboBox, CTkFrame, etc.
             widget.place(x=new_x, y=new_y)
@@ -180,7 +180,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         if self.selected_control_entry == control_entry:
             if 'x' in self.prop_widgets_map: self.prop_widgets_map['x'].delete(0, tkinter.END); self.prop_widgets_map['x'].insert(0, str(new_x))
             if 'y' in self.prop_widgets_map: self.prop_widgets_map['y'].delete(0, tkinter.END); self.prop_widgets_map['y'].insert(0, str(new_y))
-        
+
         if self.app_callbacks.get('set_dirty_callback'):
             self.app_callbacks['set_dirty_callback'](True)
 
@@ -190,7 +190,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
             # Update the control_entry with the final position (already done in on_control_drag)
             # control_entry.x = widget.winfo_x() # This might be slightly off due to place() behavior
             # control_entry.y = widget.winfo_y()
-            
+
             # Reset drag data
             self._drag_data["widget"] = None
             self._drag_data["control_entry"] = None
@@ -438,13 +438,13 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         # Hacky way to show options with CTkInputDialog:
         # This is not ideal. A proper CTkToplevel with a Combobox is better.
         # For this exercise, let's simplify and use a predefined list and ask for one by name via simpledialog.
-        
+
         choices = list(control_types.keys())
         choice_str = simpledialog.askstring("Add Control", "Choose control type:\n\n" + "\n".join(choices), parent=self)
 
         if choice_str and choice_str in control_types:
             class_name_val, def_text, def_style, def_w, def_h = control_types[choice_str]
-            
+
             new_id = max([ctrl.id_val for ctrl in self.controls_copy if isinstance(ctrl.id_val, int)], default=1000) + 1
             # Create a somewhat unique symbolic ID if possible
             base_symbolic_name = class_name_val if isinstance(class_name_val, str) else ATOM_TO_CLASSNAME_MAP.get(class_name_val, "CONTROL")

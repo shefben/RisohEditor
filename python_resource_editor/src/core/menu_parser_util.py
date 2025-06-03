@@ -71,7 +71,7 @@ _STR_TO_FLAG_LOOKUP = {
 
 
 FLAG_TO_STR_MAP = {
-        MF_STRING: "STRING", 
+        MF_STRING: "STRING",
     MF_SEPARATOR: "SEPARATOR",
     MF_POPUP: "POPUP",
     MF_OWNERDRAW: "OWNERDRAW",
@@ -149,7 +149,7 @@ class MenuItemEntry:
                     else: self.state_numeric |= flag_val
             else: # Standard menu
                 self.type_numeric |= flag_val
-        
+
         # Ensure item_type consistency for POPUP/SEPARATOR after flag changes
         if self.is_ex:
             if self.type_numeric & MF_POPUP: self.item_type = "POPUP"
@@ -165,7 +165,7 @@ class MenuItemEntry:
         """Updates self.flags (list of strings) based on numeric flag attributes."""
         self.flags.clear()
         # This is essentially what get_flags_display_list does, but we store it in self.flags
-        
+
         # Handle item type first as it might be implicitly in flags
         # For MENUEX, POPUP and SEPARATOR are primary MFT_ types.
         # For Standard, they are primary MF_ types.
@@ -195,10 +195,10 @@ class MenuItemEntry:
             else: # Standard Menu
                 if (self.type_numeric & flag_val):
                     is_set = True
-            
+
             if is_set:
                 self.flags.append(flag_name)
-        
+
         self.flags = sorted(list(set(self.flags)))
 
 
