@@ -160,6 +160,12 @@ DTS_RIGHTALIGN = 0x0020;
 MCS_DAYSTATE = 0x0001; MCS_MULTISELECT = 0x0002; MCS_WEEKNUMBERS = 0x0004;
 MCS_NOTODAYCIRCLE = 0x0008; MCS_NOTODAY = 0x0010;
 
+# Scrollbar Styles (SBS_)
+SBS_HORZ = 0x0000 # Horizontal scroll bar
+SBS_VERT = 0x0001 # Vertical scroll bar
+# Add other SBS_ styles like SBS_TOPALIGN, SBS_LEFTALIGN, SBS_BOTTOMALIGN, SBS_RIGHTALIGN,
+# SBS_SIZEBOXTOPLEFTALIGN, SBS_SIZEBOXBOTTOMRIGHTALIGN, SBS_SIZEBOX, SBS_SIZEGRIP if needed.
+
 # --- Style to String Maps (for display) ---
 # This needs to be a dictionary where keys are prefixes/class_names and values are dicts of val->str
 STYLE_TO_STR_MAP_BY_CLASS = {
@@ -178,7 +184,7 @@ STYLE_TO_STR_MAP_BY_CLASS = {
     WC_UPDOWN: {v: k for k, v in globals().items() if k.startswith("UDS_")},
     WC_DATETIMEPICK: {v: k for k, v in globals().items() if k.startswith("DTS_")},
     WC_MONTHCAL: {v: k for k, v in globals().items() if k.startswith("MCS_")},
-    # SCROLLBAR styles (SBS_) can be added if needed
+    "SCROLLBAR": {v: k for k, v in globals().items() if k.startswith("SBS_")}, # Added SCROLLBAR
 }
 EXSTYLE_TO_STR_MAP = {v: k for k, v in globals().items() if k.startswith("WS_EX_")}
 
@@ -580,7 +586,3 @@ if __name__ == '__main__':
     print("Testing dialog_parser_util.py with constants and binary helpers.")
     # ... (tests from previous step can be kept or adapted) ...
     print("\ndialog_parser_util.py self-tests completed.")
-
-
-
-[end of python_resource_editor/src/core/dialog_parser_util.py]
