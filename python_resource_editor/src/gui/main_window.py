@@ -399,6 +399,16 @@ class App(customtkinter.CTk):
             self.editmenu_reference.entryconfig("Export Selected Resource As...", state=action_state)
 
         if res_obj:
+            # Define is_image_type based on res_obj.identifier.type_id
+            image_type_ids = [RT_ICON, RT_BITMAP, RT_CURSOR, RT_GROUP_ICON, RT_GROUP_CURSOR, RT_ANIICON, RT_ANICURSOR]
+            is_image_type = (res_obj.identifier.type_id in image_type_ids) or \
+                             (isinstance(res_obj.identifier.type_id, str) and \
+                              res_obj.identifier.type_id.upper() in ["ICON", "BITMAP", "CURSOR"]) # Add other string types if necessary
+            if isinstance(res_obj, FileResource) and not is_image_type: # Further check for FileResource by extension
+                file_ext = os.path.splitext(res_obj.filepath)[1].lower()
+                if file_ext in ['.ico', '.cur', '.bmp', '.png', '.jpg', '.jpeg', '.gif', '.ani']:
+                    is_image_type = True
+
             info_text_parts = [f"Type: {self.get_type_display_name(res_obj.identifier.type_id)}", f"Name/ID: {str(res_obj.identifier.name_id)}", f"Language: {res_obj.identifier.language_id} (0x{res_obj.identifier.language_id:04X})", f"Data Class: {type(res_obj).__name__}"]
             app_callbacks = {'set_dirty_callback': self.set_app_dirty, 'show_status_callback': self.show_status}
             ctk_image: Optional[customtkinter.CTkImage] = None

@@ -9,6 +9,7 @@ gdi32 = ctypes.WinDLL('gdi32', use_last_error=True)
 # Define constants often used with these functions if not already in wintypes
 INVALID_HANDLE_VALUE = wintypes.HANDLE(0)
 LPVOID = ctypes.c_void_p
+wintypes.INT_PTR = ctypes.c_ssize_t # For pointer-sized integers, suitable for INT_PTR
 
 # --- Constants ---
 # Window Messages
@@ -102,7 +103,7 @@ class BITMAPINFO(ctypes.Structure):
 
 
 # DLGPROC type definition
-DLGPROC = ctypes.WINFUNCTYPE(wintypes.LPARAM, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+DLGPROC = ctypes.WINFUNCTYPE(wintypes.INT_PTR, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
 
 
 # Helper function to create resource strings (LPWSTR) for integer IDs

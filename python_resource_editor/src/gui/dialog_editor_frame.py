@@ -172,7 +172,19 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                 customtkinter.CTkLabel(preview_widget, text=f"Unknown: {cn_str}\n'{control_entry.text[:20]}'").pack(padx=2,pady=2, expand=True, fill="both")
 
             if preview_widget:
-                preview_widget.place(x=control_entry.x, y=control_entry.y, width=control_entry.width, height=control_entry.height)
+                if isinstance(widget_class, str) and widget_class == "placeholder_frame": # Placeholder CTkFrame
+                    preview_widget.place(x=control_entry.x, y=control_entry.y) # Width/height already set in constructor
+                elif widget_class == tkinter.Listbox:
+                    # Listbox uses pixel width/height in .place()
+                    preview_widget.place(x=control_entry.x, y=control_entry.y,
+                                         width=control_entry.width, height=control_entry.height)
+                elif isinstance(preview_widget, customtkinter.CTkBaseClass): # Other CTk widgets
+                    # Width/Height already set in constructor for CTk widgets.
+                    preview_widget.place(x=control_entry.x, y=control_entry.y)
+                else: # Fallback for any other type of widget if it sneaks through (should not happen)
+                    preview_widget.place(x=control_entry.x, y=control_entry.y,
+                                         width=control_entry.width, height=control_entry.height)
+
                 preview_widget.bind("<Button-1>", lambda e, widget=preview_widget, ctrl=control_entry: self.on_control_drag_start(e, widget, ctrl))
                 preview_widget.bind("<B1-Motion>", lambda e, widget=preview_widget, ctrl=control_entry: self.on_control_drag(e, widget, ctrl))
                 preview_widget.bind("<ButtonRelease-1>", lambda e, widget=preview_widget, ctrl=control_entry: self.on_control_drag_release(e, widget, ctrl))
