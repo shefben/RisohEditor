@@ -2,17 +2,17 @@
 //////////////////////////////////////////////////////////////////////////////
 // RisohEditor --- Another free Win32 resource editor
 // Copyright (C) 2017-2018 Katayama Hirofumi MZ <katayama.hirofumi.mz@gmail.com>
-// 
+//
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-// 
-// This program is distributed in the hope that it will be useful, 
+//
+// This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //////////////////////////////////////////////////////////////////////////////
@@ -115,11 +115,12 @@ bool DialogItem::LoadFromStream(const MByteStreamEx& stream, bool extended)
     m_siz.cy = item.cy;
     m_id = item.id;
 
-    if (!stream.ReadString(m_class) ||
-        !stream.ReadString(m_title))
-    {
+    if (!stream.ReadString(m_class))
         return false;
-    }
+    stream.ReadDwordAlignment();
+    if (!stream.ReadString(m_title))
+        return false;
+    stream.ReadDwordAlignment();
 
     BYTE b;
     if (!stream.ReadByte(b))
@@ -131,6 +132,7 @@ bool DialogItem::LoadFromStream(const MByteStreamEx& stream, bool extended)
         if (!stream.ReadData(&m_extra[0], b))
             return false;
     }
+    stream.ReadDwordAlignment();
 
     return true;
 }
@@ -156,10 +158,12 @@ bool DialogItem::LoadFromStreamEx(const MByteStreamEx& stream)
 
     stream.ReadDwordAlignment();
 
-    if (!stream.ReadString(m_class) || !stream.ReadString(m_title))
-    {
+    if (!stream.ReadString(m_class))
         return false;
-    }
+    stream.ReadDwordAlignment();
+    if (!stream.ReadString(m_title))
+        return false;
+    stream.ReadDwordAlignment();
 
     WORD extraCount;
     if (!stream.ReadWord(extraCount))
@@ -171,6 +175,7 @@ bool DialogItem::LoadFromStreamEx(const MByteStreamEx& stream)
         if (!stream.ReadData(&m_extra[0], extraCount))
             return false;
     }
+    stream.ReadDwordAlignment();
 
     return true;
 }
@@ -196,7 +201,7 @@ bool DialogItem::SaveToStream(MByteStreamEx& stream, bool extended) const
         return false;
 
     WORD w;
-    if (!IS_INTRESOURCE(m_class.ptr()) && 
+    if (!IS_INTRESOURCE(m_class.ptr()) &&
         PredefClassToID(m_class.ptr(), w))
     {
         if (!stream.WriteString(MAKEINTRESOURCEW(w)))
@@ -244,7 +249,7 @@ bool DialogItem::SaveToStreamEx(MByteStreamEx& stream) const
     stream.WriteDwordAlignment();
 
     WORD w;
-    if (!IS_INTRESOURCE(m_class.ptr()) && 
+    if (!IS_INTRESOURCE(m_class.ptr()) &&
         PredefClassToID(m_class.ptr(), w))
     {
         if (!stream.WriteString(MAKEINTRESOURCEW(w)))
@@ -422,9 +427,9 @@ MStringW DialogItem::DumpControl(MStringW& cls) const
 }
 
 MStringW
-DialogItem::_do_CONTROL(bool bNeedsText, 
-                       const MStringW& ctrl, 
-                       const MStringW& cls, 
+DialogItem::_do_CONTROL(bool bNeedsText,
+                       const MStringW& ctrl,
+                       const MStringW& cls,
                        DWORD DefStyle) const
 {
     MStringW ret;
@@ -1214,12 +1219,15 @@ bool DialogRes::_headerFromStream(const MByteStreamEx& stream)
     m_siz.cx = tmp.cx;
     m_siz.cy = tmp.cy;
 
-    if (!stream.ReadString(m_menu) ||
-        !stream.ReadString(m_class) || 
-        !stream.ReadString(m_title))
-    {
+    if (!stream.ReadString(m_menu))
         return false;
-    }
+    stream.ReadDwordAlignment();
+    if (!stream.ReadString(m_class))
+        return false;
+    stream.ReadDwordAlignment();
+    if (!stream.ReadString(m_title))
+        return false;
+    stream.ReadDwordAlignment();
 
     m_point_size = 0;
     m_weight = FW_NORMAL;
@@ -1234,6 +1242,7 @@ bool DialogRes::_headerFromStream(const MByteStreamEx& stream)
         {
             return false;
         }
+        stream.ReadDwordAlignment();
         ReplaceFont();
     }
 
@@ -1262,12 +1271,15 @@ bool DialogRes::_headerFromStreamEx(const MByteStreamEx& stream)
     m_siz.cx = TemplateEx.cx;
     m_siz.cy = TemplateEx.cy;
 
-    if (!stream.ReadString(m_menu) ||
-        !stream.ReadString(m_class) ||
-        !stream.ReadString(m_title))
-    {
+    if (!stream.ReadString(m_menu))
         return false;
-    }
+    stream.ReadDwordAlignment();
+    if (!stream.ReadString(m_class))
+        return false;
+    stream.ReadDwordAlignment();
+    if (!stream.ReadString(m_title))
+        return false;
+    stream.ReadDwordAlignment();
 
     m_point_size = 0;
     m_weight = FW_NORMAL;
@@ -1279,13 +1291,14 @@ bool DialogRes::_headerFromStreamEx(const MByteStreamEx& stream)
     if (TemplateEx.style & DS_SETFONT)
     {
         if (!stream.ReadWord(m_point_size) ||
-            !stream.ReadWord(m_weight) || 
+            !stream.ReadWord(m_weight) ||
             !stream.ReadByte(m_italic) ||
             !stream.ReadByte(m_charset) ||
             !stream.ReadString(m_type_face))
         {
             return false;
         }
+        stream.ReadDwordAlignment();
         ReplaceFont();
     }
 
@@ -1365,7 +1378,7 @@ bool DialogRes::_headerToStreamEx(MByteStreamEx& stream) const
 //////////////////////////////////////////////////////////////////////////////
 
 DialogItemClipboard::DialogItemClipboard(DialogRes& dialog_res)
-    : m_dialog_res(dialog_res), 
+    : m_dialog_res(dialog_res),
     m_uCF_DIALOGITEMS(::RegisterClipboardFormat(TEXT("RisohEditor_DialogItem_ClipboardData")))
 {
 }
