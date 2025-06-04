@@ -18,9 +18,6 @@ from ..core.dialog_parser_util import (
     BS_GROUPBOX, SBS_HORZ, LVS_REPORT, TVS_HASLINES, TVS_LINESATROOT, TVS_HASBUTTONS
 )
 from ..core.resource_types import DialogResource # For type hinting
-import ctypes
-from ..utils import winapi_ctypes as wct
-from ..core.resource_base import RT_DIALOG
 
 
 class DialogEditorFrame(customtkinter.CTkFrame):
@@ -35,9 +32,6 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         self.selected_control_entry: Optional[DialogControlEntry] = None
         self.preview_widgets: Dict[DialogControlEntry, customtkinter.CTkBaseClass] = {}
         self._drag_data = {"widget": None, "control_entry": None, "start_x_widget": 0, "start_y_widget": 0, "start_x_event_root":0, "start_y_event_root":0}
-
-        self.current_preview_hwnd: Optional[wct.HWND] = None
-        self.py_dialog_proc = wct.DLGPROC(self._preview_dialog_proc_impl) # Keep reference
 
 
         self.grid_columnconfigure(0, weight=2)
@@ -69,128 +63,79 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         self.render_dialog_preview()
         self.display_dialog_properties()
 
-    def _preview_dialog_proc_impl(self, hwnd: wct.HWND, uMsg: wct.UINT, wParam: wct.WPARAM, lParam: wct.LPARAM) -> wct.INT_PTR:
-        if uMsg == wct.WM_INITDIALOG:
-            # Store the HWND of the created dialog if needed for later manipulation
-            # self.actual_created_dialog_hwnd = hwnd
-            return True # Processed
-        # Add more message handling if needed for a preview (e.g., disabling controls)
-        return False # Not processed
-
-    def destroy_win32_preview(self):
-        if self.current_preview_hwnd:
-            wct.DestroyWindow(self.current_preview_hwnd)
-            self.current_preview_hwnd = None
-
     def render_dialog_preview(self):
-        self.destroy_win32_preview() # Clear previous Win32 preview first
         for widget in self.preview_canvas.winfo_children(): widget.destroy()
         self.preview_widgets.clear()
         preview_width = max(100, self.dialog_props_copy.width); preview_height = max(50, self.dialog_props_copy.height)
-        self.preview_canvas.configure(width=preview_width, height=preview_height) # Keep this for canvas sizing
+        self.preview_canvas.configure(width=preview_width, height=preview_height)
 
-        # --- New Win32 Preview Logic ---
-        template_data = self.dialog_resource.to_binary_data()
-        if not template_data:
-            customtkinter.CTkLabel(self.preview_canvas, text="Error: Failed to generate binary template for preview.").pack(padx=5, pady=5, expand=True)
-            return
-        if not isinstance(template_data, bytes) or len(template_data) == 0:
-            customtkinter.CTkLabel(self.preview_canvas, text="Error: Generated binary template is empty or invalid.").pack(padx=5, pady=5, expand=True)
-            return
+        for control_entry in self.controls_copy:
+            # Normalize class name for matching (string or atom)
+            cn_str = ""
+            if isinstance(control_entry.class_name, int): # Atom
+                cn_str = ATOM_TO_CLASSNAME_MAP.get(control_entry.class_name, f"ATOM_0x{control_entry.class_name:04X}").upper()
+            elif isinstance(control_entry.class_name, str):
+                cn_str = control_entry.class_name.upper()
 
-        # Ensure lpTemplate is not garbage collected before CreateDialogIndirectParamW is called
-        # by keeping a reference to it in the class or passing it appropriately.
-        # For now, it's local to this function, which might be okay if CreateDialog is synchronous.
-        self.lpTemplate_buffer = ctypes.create_string_buffer(template_data, len(template_data))
-        lpTemplatePtr = ctypes.cast(self.lpTemplate_buffer, wct.LPVOID)
+            # --- TEMPORARY DEBUG PRINT ---
+            print(f"Control Class Normalized: '{cn_str}', Original: {repr(control_entry.class_name)}, Text: '{control_entry.text}', ID: {control_entry.get_id_display()}")
+            # --- END TEMPORARY DEBUG PRINT ---
 
-        try:
-            hwnd_parent_preview = self.preview_canvas.winfo_id()
-        except tkinter.TclError: # If canvas not yet mapped
-            self.preview_canvas.update_idletasks()
-            hwnd_parent_preview = self.preview_canvas.winfo_id()
+            widget_class = None; widget_params = {"master": self.preview_canvas, "text": control_entry.text}
 
-        hInst = wct.GetModuleHandleW(None)
-        if not hInst: # Fallback if GetModuleHandleW(None) returns 0
-            hInst = wct.HINSTANCE(0) # For memory-based templates, hInstance can often be NULL or the current process's base.
-                                     # Using 0 if GetModuleHandleW(None) fails, which might happen in some contexts.
+            if cn_str == "BUTTON": widget_class = customtkinter.CTkButton
+            elif cn_str == "EDIT":
+                widget_class = customtkinter.CTkEntry; widget_params["placeholder_text"] = control_entry.text; del widget_params["text"]
+            elif cn_str == "STATIC": widget_class = customtkinter.CTkLabel
+            elif cn_str == "LISTBOX":
+                widget_class = tkinter.Listbox; widget_params.update({"background": "#333333", "foreground": "white", "borderwidth":1})
+            elif cn_str == "COMBOBOX":
+                widget_class = customtkinter.CTkComboBox; widget_params["values"] = [control_entry.text] if control_entry.text else ["Sample"]; widget_params["state"] = "readonly"; del widget_params["text"]
+            elif cn_str == "SCROLLBAR": # Added SCROLLBAR
+                widget_class = customtkinter.CTkScrollbar; widget_params.pop("text", None) # Scrollbar might not take text
+            elif cn_str in [cls.upper() for cls in KNOWN_STRING_CLASSES]:
+                widget_class = "placeholder_frame"
 
-        self.current_preview_hwnd = wct.CreateDialogIndirectParamW(
-            hInst,
-            lpTemplatePtr,
-            hwnd_parent_preview,
-            self.py_dialog_proc,
-            0  # dwInitParam (lParam)
-        )
+            preview_widget = None
+            # Pass width and height to constructors for CTk widgets
+            widget_params_with_size = {
+                **widget_params,
+                "width": control_entry.width,
+                "height": control_entry.height
+            }
 
-        if not self.current_preview_hwnd or self.current_preview_hwnd.value == 0:
-            error_code = ctypes.get_last_error()
-            error_text = (f"Win32 Preview Error:\nCreateDialogIndirectParamW failed.\n"
-                          f"Error Code: {error_code} (0x{error_code:X})\n"
-                          f"Template Size: {len(template_data)} bytes\n"
-                          f"hInst: {hInst.value if hInst else 'None'}\n"
-                          f"Parent HWND: {hwnd_parent_preview}")
-            customtkinter.CTkLabel(self.preview_canvas, text=error_text, wraplength=300).pack(padx=5, pady=5, expand=True)
-            print(f"DEBUG: CreateDialogIndirectParamW failed with code {error_code}")
-            print(f"DEBUG: Template (first 64 bytes): {template_data[:64].hex(' ', 1)}")
-            self.current_preview_hwnd = None
-        else:
-            # Attempt to make it a child and remove frame for basic embedding
-            original_style = wct.GetWindowLongW(self.current_preview_hwnd, wct.GWL_STYLE)
-            new_style = (original_style & ~(wct.WS_POPUP | wct.WS_CAPTION | wct.WS_THICKFRAME | wct.WS_SYSMENU)) | wct.WS_CHILD
+            if widget_class == "placeholder_frame":
+                preview_widget = customtkinter.CTkFrame(self.preview_canvas, border_width=1, fg_color="gray40", width=control_entry.width, height=control_entry.height)
+                display_class_name = control_entry.class_name if isinstance(control_entry.class_name, str) else ATOM_TO_CLASSNAME_MAP.get(control_entry.class_name, cn_str)
+                customtkinter.CTkLabel(preview_widget, text=f"{display_class_name}\n'{control_entry.text[:20]}' ({control_entry.get_id_display()})").pack(padx=2,pady=2, expand=True, fill="both")
+            elif widget_class:
+                if widget_class == tkinter.Listbox: # Listbox handles width/height differently (chars/lines)
+                     preview_widget = widget_class(**widget_params) # Original params without pixel width/height
+                     preview_widget.insert("end", control_entry.text if control_entry.text else "Listbox Item")
+                elif widget_class in [customtkinter.CTkButton, customtkinter.CTkEntry, customtkinter.CTkLabel, customtkinter.CTkComboBox, customtkinter.CTkScrollbar]: # Added CTkScrollbar
+                    preview_widget = widget_class(**widget_params_with_size)
+                else: # Should ideally not happen if all CTk widgets are covered
+                    preview_widget = widget_class(**widget_params) # Fallback, might not use w/h correctly
+            else: # Unknown widget (widget_class is None), create a placeholder frame
+                preview_widget = customtkinter.CTkFrame(self.preview_canvas, border_width=1, fg_color="gray30", width=control_entry.width, height=control_entry.height)
+                customtkinter.CTkLabel(preview_widget, text=f"Unknown: {cn_str}\n'{control_entry.text[:20]}'").pack(padx=2,pady=2, expand=True, fill="both")
 
-            # Ensure WS_VISIBLE is set if it was originally meant to be or if CreateDialog doesn't force it.
-            # CreateDialogIndirectParam usually shows the dialog if DS_VISIBLE or WS_VISIBLE is in template.
-            # Adding it here ensures it if it was stripped by FixupForRad for example.
-            new_style |= wct.WS_VISIBLE
+            if preview_widget:
+                # For CTk widgets, width/height are set at construction.
+                # For tkinter.Listbox, width/height in .place are in characters/rows.
+                if isinstance(preview_widget, customtkinter.CTkBaseClass): # Covers CTkButton, CTkEntry, CTkLabel, CTkComboBox, CTkFrame, CTkScrollbar etc.
+                    preview_widget.place(x=control_entry.x, y=control_entry.y)
+                elif isinstance(preview_widget, tkinter.Listbox):
+                    preview_widget.place(x=control_entry.x, y=control_entry.y, width=control_entry.width, height=control_entry.height) # Keep for Listbox
+                else: # Default fallback, might be for custom/other Tk widgets (though most known are CTk or Listbox)
+                    preview_widget.place(x=control_entry.x, y=control_entry.y, width=control_entry.width, height=control_entry.height)
 
-            wct.SetWindowLongW(self.current_preview_hwnd, wct.GWL_STYLE, new_style)
+                # Bindings for selection and dragging
+                preview_widget.bind("<Button-1>", lambda e, widget=preview_widget, ctrl=control_entry: self.on_control_drag_start(e, widget, ctrl))
+                preview_widget.bind("<B1-Motion>", lambda e, widget=preview_widget, ctrl=control_entry: self.on_control_drag(e, widget, ctrl))
+                preview_widget.bind("<ButtonRelease-1>", lambda e, widget=preview_widget, ctrl=control_entry: self.on_control_drag_release(e, widget, ctrl))
 
-            original_ex_style = wct.GetWindowLongW(self.current_preview_hwnd, wct.GWL_EXSTYLE)
-            new_ex_style = original_ex_style & ~(wct.WS_EX_DLGMODALFRAME | wct.WS_EX_WINDOWEDGE | wct.WS_EX_STATICEDGE | wct.WS_EX_APPWINDOW)
-            wct.SetWindowLongW(self.current_preview_hwnd, wct.GWL_EXSTYLE, new_ex_style)
-
-            # Set parent again after style changes
-            wct.SetParent(self.current_preview_hwnd, hwnd_parent_preview)
-
-            rect = wct.RECT()
-            wct.user32.GetWindowRect(self.current_preview_hwnd, ctypes.byref(rect))
-            dlg_width = rect.right - rect.left
-            dlg_height = rect.bottom - rect.top
-
-            # Ensure preview_canvas is at least as large as the dialog that was created
-            # The DLU conversion happens inside Windows based on the dialog's font.
-            current_canvas_width = self.preview_canvas.winfo_width()
-            current_canvas_height = self.preview_canvas.winfo_height()
-
-            new_canvas_width = max(current_canvas_width, dlg_width + 4) # Add some padding
-            new_canvas_height = max(current_canvas_height, dlg_height + 4)
-
-            if new_canvas_width > current_canvas_width or new_canvas_height > current_canvas_height:
-                self.preview_canvas.configure(width=new_canvas_width, height=new_canvas_height)
-                self.preview_canvas.update_idletasks() # Ensure canvas size is updated before placing dialog
-
-            # Center the dialog within the preview_canvas
-            final_canvas_width = self.preview_canvas.winfo_width()
-            final_canvas_height = self.preview_canvas.winfo_height()
-            place_x = (final_canvas_width - dlg_width) // 2
-            place_y = (final_canvas_height - dlg_height) // 2
-
-            wct.SetWindowPos(self.current_preview_hwnd, 0, place_x, place_y, dlg_width, dlg_height,
-                               wct.SWP_FRAMECHANGED | wct.SWP_NOZORDER | wct.SWP_NOACTIVATE) # Removed SWP_NOSIZE, SWP_NOMOVE
-
-            wct.ShowWindow(self.current_preview_hwnd, wct.SW_SHOW)
-
-            # Create a CTk overlay to capture clicks on the canvas for deselection
-            # This is a workaround as the Win32 dialog will capture mouse events over it.
-            # We need a way to detect clicks on the "background" of the preview_canvas.
-            # This overlay should be transparent to mouse events itself if possible, or handle them.
-            # For now, the existing preview_canvas.bind("<Button-1>") might still work for areas not covered by the HWND.
-
-            # No CTk widgets are created in this mode, so preview_widgets remains empty.
-            # Selection/drag logic will need to be rethought if Win32 controls are to be interactive.
-            # For now, this is a static preview.
-            self.preview_widgets.clear() # Ensure this is clear as we are not adding CTk widgets
+                self.preview_widgets[control_entry] = preview_widget
 
     def on_control_drag_start(self, event, widget: Union[customtkinter.CTkBaseClass, tkinter.Listbox], control_entry: DialogControlEntry):
         self.on_control_selected_on_preview(control_entry) # Select the control first
@@ -364,10 +309,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
             if isinstance(widget, tkinter.Listbox):
                  widget.configure(relief="solid" if is_selected else "flat", borderwidth=2 if is_selected else 0)
             else: # CTk widgets
-                effective_border_color = border_color
-                if effective_border_color is None:
-                    effective_border_color = "transparent"
-                try: widget.configure(border_width=border_width, border_color=effective_border_color)
+                try: widget.configure(border_width=border_width, border_color=border_color)
                 except tkinter.TclError: pass # Some CTk widgets might not support border_color=None
 
 
@@ -488,6 +430,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         # For now, using some common combinations. ES_LEFT, SS_LEFT, SBS_HORZ are often 0.
 
         dialog = customtkinter.CTkInputDialog(text="Enter control type:", title="Add Control",
+                                             button_text="Next",
                                              # This InputDialog doesn't support combobox directly.
                                              # We'll ask for text and validate. A custom dialog would be better for fixed choices.
                                              # For now, let's list the options in the prompt.

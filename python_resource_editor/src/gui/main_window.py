@@ -11,6 +11,9 @@ import copy # For deepcopy
 import shutil # For file copy on export
 from PIL import Image, ImageTk, UnidentifiedImageError
 from typing import List, Dict, Callable, Optional, Union, Tuple
+import ctypes
+from ..utils import winapi_ctypes as wct
+from ..utils.image_utils import hicon_to_pil_image
 from ..core.pe_parser import extract_resources_from_pe
 from ..core.rc_parser import RCParser
 from ..core.res_parser import parse_res_file
@@ -395,13 +398,11 @@ class App(customtkinter.CTk):
             self.editmenu_reference.entryconfig("Clone to New Language...", state=action_state)
             self.editmenu_reference.entryconfig("Export Selected Resource As...", state=action_state)
 
-
         if res_obj:
-            info_text_parts = [f"Type: {self.get_type_display_name(res_obj.identifier.type_id)}", f"Name/ID: {res_obj.identifier.name_id}", f"Language: {res_obj.identifier.language_id} (0x{res_obj.identifier.language_id:04X})", f"Data Class: {type(res_obj).__name__}"]
-            is_image_type = res_obj.identifier.type_id in [RT_ICON, RT_BITMAP, RT_CURSOR, RT_GROUP_ICON, RT_GROUP_CURSOR] or \
-                            (isinstance(res_obj, FileResource) and \
-                             any(res_obj.filepath.lower().endswith(ext) for ext in ['.ico', '.cur', '.bmp', '.png', '.jpg', '.jpeg', '.gif']))
-            app_callbacks = {'set_dirty_callback': self.set_app_dirty}
+            info_text_parts = [f"Type: {self.get_type_display_name(res_obj.identifier.type_id)}", f"Name/ID: {str(res_obj.identifier.name_id)}", f"Language: {res_obj.identifier.language_id} (0x{res_obj.identifier.language_id:04X})", f"Data Class: {type(res_obj).__name__}"]
+            app_callbacks = {'set_dirty_callback': self.set_app_dirty, 'show_status_callback': self.show_status}
+            ctk_image: Optional[customtkinter.CTkImage] = None
+            image_label: Optional[customtkinter.CTkLabel] = None
 
             if isinstance(res_obj, StringTableResource):
                 editor = StringTableEditorFrame(self.editor_frame, res_obj, app_callbacks)
@@ -689,7 +690,7 @@ class App(customtkinter.CTk):
                 try:
                     self.resources.remove(res_obj); self.populate_treeview(); self.set_app_dirty(True); self._clear_editor_frame(); self.current_selected_resource_item_id = None
                     if self.editmenu_reference: self.editmenu_reference.entryconfig("Delete Resource", state="disabled")
-                    self.show_status(f"Resource '{str(res_obj.identifier.name_id)}' deleted.", 3000)
+                    self.show_status(f"Resource '{res_obj.identifier.name_id_to_str()}' deleted.", 3000)
                 except ValueError:
                     self.show_error_message("Delete Error", "Could not find resource in list.")
                     self.show_status("Error deleting resource.", 5000, is_error=True)

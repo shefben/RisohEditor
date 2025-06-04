@@ -205,7 +205,7 @@ class DialogResource(Resource):
 
                 if item_is_ex:
                     current_field = f"DLGITEMTEMPLATEEX header for ctrl #{i+1}"
-                    item_hdr_fmt = '<LLLhhhhH'; item_hdr_size = struct.calcsize(item_hdr_fmt)
+                    item_hdr_fmt = '<LLLhhhhL'; item_hdr_size = struct.calcsize(item_hdr_fmt)
                     item_header_data = stream.read(item_hdr_size)
                     if len(item_header_data) < item_hdr_size: raise EOFError(f"Incomplete data for {current_field} (expected {item_hdr_size}, got {len(item_header_data)}).")
                     help_id_ctrl, ex_style_ctrl, style_ctrl, x_ctrl, y_ctrl, w_ctrl, h_ctrl, id_ctrl = struct.unpack(item_hdr_fmt, item_header_data)
@@ -321,9 +321,6 @@ class DialogResource(Resource):
                                      len(self.controls), props.x, props.y, props.width, props.height)
             stream.write(header_part1)
 
-        current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4 # Align after main dialog header
-        if padding > 0: stream.write(b'\x00' * padding)
-
         self._write_dialog_string_or_ordinal(stream, props.menu_name or props.symbolic_menu_name)
         current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4
         if padding > 0: stream.write(b'\x00' * padding)
@@ -345,11 +342,11 @@ class DialogResource(Resource):
             if padding > 0: stream.write(b'\x00' * padding)
 
         for ctrl in self.controls:
-            current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4 # Align start of control item
+            current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4
             if padding > 0: stream.write(b'\x00' * padding)
 
             if props.is_ex:
-                item_header = struct.pack('<LLLhhhhH', # Corrected: L to H for ID
+                item_header = struct.pack('<LLLhhhhL',
                                           ctrl.help_id, ctrl.ex_style, ctrl.style,
                                           ctrl.x, ctrl.y, ctrl.width, ctrl.height,
                                           ctrl.id_val if isinstance(ctrl.id_val, int) else 0)
@@ -361,44 +358,35 @@ class DialogResource(Resource):
                                           ctrl.id_val if isinstance(ctrl.id_val, int) else 0)
                 stream.write(item_header)
 
-            current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4 # Align after control item header
-            if padding > 0: stream.write(b'\x00' * padding)
-
             class_to_write: Union[str, int, None] = None
             if isinstance(ctrl.class_name, str):
                 class_to_write = CLASSNAME_TO_ATOM_MAP.get(ctrl.class_name.upper(), ctrl.class_name)
             elif isinstance(ctrl.class_name, int):
                 class_to_write = ctrl.class_name
             self._write_dialog_string_or_ordinal(stream, class_to_write)
-            current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4 # Existing: align after class
+            current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4
             if padding > 0: stream.write(b'\x00' * padding)
 
             ctrl_text_to_write: Union[str, int, None] = ctrl.text
             if isinstance(ctrl.text, str) and ctrl.text.startswith("#") and ctrl.text[1:].isdigit():
                  ctrl_text_to_write = int(ctrl.text[1:])
             self._write_dialog_string_or_ordinal(stream, ctrl_text_to_write)
-            current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4 # Existing: align after text
+            current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4
             if padding > 0: stream.write(b'\x00' * padding)
 
             creation_data_bytes = ctrl.creation_data if ctrl.creation_data is not None else b''
             creation_data_len = len(creation_data_bytes)
 
             if props.is_ex:
-                if creation_data_len > 0xFFFF: # This indicates a DWORD size follows
+                if creation_data_len > 0xFFFF:
                     stream.write(struct.pack('<HL', 0xFFFF, creation_data_len))
                 else:
                     stream.write(struct.pack('<H', creation_data_len))
             else:
                  stream.write(struct.pack('<H', creation_data_len))
 
-            # No alignment immediately after size word, data follows directly.
-
             if creation_data_len > 0:
                 stream.write(creation_data_bytes)
-
-            current_pos = stream.tell(); padding = (4 - (current_pos % 4)) % 4 # Align after creation data
-            if padding > 0: stream.write(b'\x00' * padding)
-
         return stream.getvalue()
 
 class IconResource(Resource):
@@ -444,7 +432,7 @@ class GroupIconResource(Resource):
                 if len(entry_data) < 14:
                     raise EOFError(f"Incomplete {current_field} (expected 14 bytes, got {len(entry_data)})")
 
-                bW, bH, bCC, bR, wPorX, wBorY, dwBytes, nID = struct.unpack('<BBBBHHLH', entry_data)
+                bW, bH, bCC, bR, wPorX, wBorY, dwBytes, nID = struct.unpack('<BBBBHHLLH', entry_data)
                 entries.append(GrpIconDirEntryData(bW, bH, bCC, bR, wPorX, wBorY, dwBytes, nID))
 
         except (struct.error, EOFError, ValueError) as e: # Added ValueError
