@@ -186,9 +186,9 @@ LookupIconIdFromDirectoryEx.argtypes = [
     wintypes.UINT
 ]
 
-GetIconInfoW = user32.GetIconInfoW
-GetIconInfoW.restype = wintypes.BOOL
-GetIconInfoW.argtypes = [wintypes.HICON, ctypes.POINTER(ICONINFO)]
+GetIconInfo = user32.GetIconInfo # Corrected name
+GetIconInfo.restype = wintypes.BOOL
+GetIconInfo.argtypes = [wintypes.HICON, ctypes.POINTER(ICONINFO)] # ICONINFO should already be defined
 
 DestroyIcon = user32.DestroyIcon
 DestroyIcon.restype = wintypes.BOOL
