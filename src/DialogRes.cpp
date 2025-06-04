@@ -212,9 +212,11 @@ bool DialogItem::SaveToStream(MByteStreamEx& stream, bool extended) const
         if (!stream.WriteString(m_class.ptr()))
             return false;
     }
+    stream.WriteDwordAlignment(); // After m_class
 
     if (!stream.WriteString(m_title.ptr()))
         return false;
+    stream.WriteDwordAlignment(); // After m_title
 
     BYTE b = BYTE(m_extra.size());
     if (!stream.WriteRaw(b))
@@ -222,10 +224,10 @@ bool DialogItem::SaveToStream(MByteStreamEx& stream, bool extended) const
 
     if (b)
     {
-        stream.WriteDwordAlignment();
         if (!stream.WriteData(&m_extra[0], b))
             return false;
     }
+    stream.WriteDwordAlignment(); // After m_extra data or 'b'
 
     return true;
 }
@@ -245,8 +247,7 @@ bool DialogItem::SaveToStreamEx(MByteStreamEx& stream) const
     ItemEx.id = m_id;
     if (!stream.WriteRaw(ItemEx))
         return false;
-
-    stream.WriteDwordAlignment();
+    stream.WriteDwordAlignment(); // After DLGITEMTEMPLATEEXHEAD ItemEx
 
     WORD w;
     if (!IS_INTRESOURCE(m_class.ptr()) &&
@@ -260,9 +261,12 @@ bool DialogItem::SaveToStreamEx(MByteStreamEx& stream) const
         if (!stream.WriteString(m_class.ptr()))
             return false;
     }
+    stream.WriteDwordAlignment(); // After m_class
 
-    if (!stream.WriteString(m_title.ptr()) ||
-        !stream.WriteWord(WORD(m_extra.size())))
+    if (!stream.WriteString(m_title.ptr()))
+        return false;
+    stream.WriteDwordAlignment(); // After m_title
+    if (!stream.WriteWord(WORD(m_extra.size())))
     {
         return false;
     }
@@ -273,6 +277,7 @@ bool DialogItem::SaveToStreamEx(MByteStreamEx& stream) const
         if (!stream.WriteData(&m_extra[0], ExtraSize))
             return false;
     }
+    stream.WriteDwordAlignment(); // After m_extra data or size
 
     return true;
 }
@@ -1318,13 +1323,20 @@ bool DialogRes::_headerToStream(MByteStreamEx& stream) const
     tmp.y = (SHORT)m_pt.y;
     tmp.cx = (SHORT)m_siz.cx;
     tmp.cy = (SHORT)m_siz.cy;
-    if (!stream.WriteRaw(tmp) ||
-        !stream.WriteString(m_menu.ptr()) ||
-        !stream.WriteString(m_class.ptr()) ||
-        !stream.WriteString(m_title.ptr()))
-    {
+    if (!stream.WriteRaw(tmp))
         return false;
-    }
+
+    if (!stream.WriteString(m_menu.ptr()))
+        return false;
+    stream.WriteDwordAlignment(); // After m_menu
+
+    if (!stream.WriteString(m_class.ptr()))
+        return false;
+    stream.WriteDwordAlignment(); // After m_class
+
+    if (!stream.WriteString(m_title.ptr()))
+        return false;
+    stream.WriteDwordAlignment(); // After m_title
 
     if (tmp.style & DS_SETFONT)
     {
@@ -1333,6 +1345,7 @@ bool DialogRes::_headerToStream(MByteStreamEx& stream) const
         {
             return false;
         }
+        stream.WriteDwordAlignment(); // After m_type_face
     }
 
     return true;
@@ -1353,13 +1366,21 @@ bool DialogRes::_headerToStreamEx(MByteStreamEx& stream) const
     TemplateEx.y = (short)m_pt.y;
     TemplateEx.cx = (short)m_siz.cx;
     TemplateEx.cy = (short)m_siz.cy;
-    if (!stream.WriteRaw(TemplateEx) ||
-        !stream.WriteString(m_menu.ptr()) ||
-        !stream.WriteString(m_class.ptr()) ||
-        !stream.WriteString(m_title.ptr()))
-    {
+    if (!stream.WriteRaw(TemplateEx))
         return false;
-    }
+    stream.WriteDwordAlignment(); // After TemplateEx structure
+
+    if (!stream.WriteString(m_menu.ptr()))
+        return false;
+    stream.WriteDwordAlignment(); // After m_menu
+
+    if (!stream.WriteString(m_class.ptr()))
+        return false;
+    stream.WriteDwordAlignment(); // After m_class
+
+    if (!stream.WriteString(m_title.ptr()))
+        return false;
+    stream.WriteDwordAlignment(); // After m_title
 
     if (TemplateEx.style & DS_SETFONT)
     {
@@ -1371,6 +1392,7 @@ bool DialogRes::_headerToStreamEx(MByteStreamEx& stream) const
         {
             return false;
         }
+        stream.WriteDwordAlignment(); // After m_type_face
     }
     return true;
 }

@@ -205,7 +205,7 @@ class DialogResource(Resource):
 
                 if item_is_ex:
                     current_field = f"DLGITEMTEMPLATEEX header for ctrl #{i+1}"
-                    item_hdr_fmt = '<LLLhhhhL'; item_hdr_size = struct.calcsize(item_hdr_fmt)
+                    item_hdr_fmt = '<LLLhhhhH'; item_hdr_size = struct.calcsize(item_hdr_fmt)
                     item_header_data = stream.read(item_hdr_size)
                     if len(item_header_data) < item_hdr_size: raise EOFError(f"Incomplete data for {current_field} (expected {item_hdr_size}, got {len(item_header_data)}).")
                     help_id_ctrl, ex_style_ctrl, style_ctrl, x_ctrl, y_ctrl, w_ctrl, h_ctrl, id_ctrl = struct.unpack(item_hdr_fmt, item_header_data)
@@ -432,7 +432,7 @@ class GroupIconResource(Resource):
                 if len(entry_data) < 14:
                     raise EOFError(f"Incomplete {current_field} (expected 14 bytes, got {len(entry_data)})")
 
-                bW, bH, bCC, bR, wPorX, wBorY, dwBytes, nID = struct.unpack('<BBBBHHLLH', entry_data)
+                bW, bH, bCC, bR, wPorX, wBorY, dwBytes, nID = struct.unpack('<BBBBHHLH', entry_data)
                 entries.append(GrpIconDirEntryData(bW, bH, bCC, bR, wPorX, wBorY, dwBytes, nID))
 
         except (struct.error, EOFError, ValueError) as e: # Added ValueError
