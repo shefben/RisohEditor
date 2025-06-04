@@ -14,7 +14,7 @@ from ..core.dialog_parser_util import (
     BUTTON_ATOM, EDIT_ATOM, STATIC_ATOM, LISTBOX_ATOM, COMBOBOX_ATOM, SCROLLBAR_ATOM,
     WC_LISTVIEW, WC_TREEVIEW, WC_TABCONTROL, WC_PROGRESS, WC_TOOLBAR,
     WC_TRACKBAR, WC_UPDOWN, WC_DATETIMEPICK, WC_MONTHCAL, WC_IPADDRESS, WC_LINK,
-    BS_PUSHBUTTON, WS_CHILD, WS_VISIBLE, WS_TABSTOP, WS_CAPTION, WS_GROUP, # Added WS_GROUP
+    BS_PUSHBUTTON, WS_CHILD, WS_VISIBLE, WS_TABSTOP, WS_CAPTION, WS_GROUP,
     ES_LEFT, WS_BORDER, LBS_STANDARD, CBS_DROPDOWNLIST, WS_VSCROLL,
     BS_GROUPBOX, SBS_HORZ, LVS_REPORT, TVS_HASLINES, TVS_LINESATROOT, TVS_HASBUTTONS
 )
@@ -41,11 +41,10 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         self.resize_handle_widget: Optional[customtkinter.CTkFrame] = None
         self._resize_drag_data = {"widget": None, "control_entry": None, "start_x_event_root": 0, "start_y_event_root": 0, "start_width": 0, "start_height": 0}
 
-        # For external native window
         self.native_dlg_hwnd: Optional[wct.wintypes.HWND] = None
         self.native_wnd_proc_ref = wct.WNDPROC(self._external_dialog_wnd_proc)
         self.external_window_class_name = f"PyNativeDialogHost_{id(self)}"
-        self.native_control_hwnds: Dict[DialogControlEntry, wct.wintypes.HWND] = {} # Added
+        self.native_control_hwnds: Dict[DialogControlEntry, wct.wintypes.HWND] = {}
 
 
         self.grid_columnconfigure(0, weight=2)
@@ -81,12 +80,12 @@ class DialogEditorFrame(customtkinter.CTkFrame):
 
         action_button_frame = customtkinter.CTkFrame(self, fg_color="transparent")
         action_button_frame.grid(row=1, column=0, columnspan=2, pady=10, sticky="ew")
-        action_button_frame.grid_columnconfigure((0,1,2,3,4), weight=1) # Added one more column for new button
+        action_button_frame.grid_columnconfigure((0,1,2,3,4), weight=1)
 
         customtkinter.CTkButton(action_button_frame, text="Add Control", command=self.on_add_control).grid(row=0, column=0, padx=5)
         customtkinter.CTkButton(action_button_frame, text="Delete Control", command=self.on_delete_control).grid(row=0, column=1, padx=5)
         customtkinter.CTkButton(action_button_frame, text="Show Native Window", command=self._create_external_native_window).grid(row=0, column=2, padx=5)
-        customtkinter.CTkButton(action_button_frame, text="Apply All to Resource", command=self.apply_all_changes_to_resource).grid(row=0, column=4, padx=5) # Moved to last
+        customtkinter.CTkButton(action_button_frame, text="Apply All to Resource", command=self.apply_all_changes_to_resource).grid(row=0, column=4, padx=5)
 
         self.render_dialog_preview()
         self.display_dialog_properties()
@@ -118,8 +117,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
     def _create_external_native_window(self):
         if self.native_dlg_hwnd and self.native_dlg_hwnd.value != 0 :
             print("Attempting to focus existing external native window.")
-            wct.ShowWindow(self.native_dlg_hwnd, wct.SW_SHOW) # SW_SHOWNORMAL might be better: 1
-            # wct.user32.SetFocus(self.native_dlg_hwnd) # SetFocus can be tricky
+            wct.ShowWindow(self.native_dlg_hwnd, wct.SW_SHOW)
             wct.user32.SetForegroundWindow(self.native_dlg_hwnd)
             return
 
@@ -147,13 +145,37 @@ class DialogEditorFrame(customtkinter.CTkFrame):
 
         dialog_title = str(self.dialog_props_copy.caption or "Native Dialog Editor")
 
+        # Convert dialog DLUs to pixels for the main window size
+        # This assumes dialog_props_copy.x/y are not used for top-level window pos,
+        # and width/height are content size in DLUs.
+        main_dlu_rect = wct.RECT()
+        main_dlu_rect.left = 0
+        main_dlu_rect.top = 0
+        main_dlu_rect.right = self.dialog_props_copy.width
+        main_dlu_rect.bottom = self.dialog_props_copy.height
+
+        # Create a temporary invisible dialog to use MapDialogRect, as it needs a valid HWND
+        # that has the dialog font set (or system dialog font).
+        # For a non-dialog window class, MapDialogRect might not use the correct base units
+        # unless the window itself processes WM_SETFONT.
+        # A simpler approach for the main window is to use a default size or calculate from screen.
+        # For now, using a fixed pixel size for the main window, DLU conversion for controls.
+        main_w, main_h = 500, 400
+        # If we had a dummy HWND with dialog font:
+        # wct.MapDialogRect(dummy_dialog_hwnd_for_font, ctypes.byref(main_dlu_rect))
+        # main_w = main_dlu_rect.right
+        # main_h = main_dlu_rect.bottom
+        # if main_w < 100: main_w = 500 # Ensure minimum size
+        # if main_h < 100: main_h = 400
+
+
         self.native_dlg_hwnd = wct.CreateWindowExW(
             0,
             self.external_window_class_name,
             dialog_title,
             wct.WS_OVERLAPPEDWINDOW | wct.WS_VISIBLE,
             wct.CW_USEDEFAULT, wct.CW_USEDEFAULT,
-            500, 400,
+            main_w, main_h,
             None,
             None,
             h_instance,
@@ -165,14 +187,13 @@ class DialogEditorFrame(customtkinter.CTkFrame):
             self.native_dlg_hwnd = None
         else:
             print(f"External native window '{dialog_title}' created with HWND: {self.native_dlg_hwnd.value}")
-            self._populate_native_dialog_with_controls() # Populate with controls
+            self._populate_native_dialog_with_controls()
 
     def destroy_external_native_window(self):
         if self.native_dlg_hwnd and self.native_dlg_hwnd.value != 0:
             print(f"Destroying external native window: {self.native_dlg_hwnd.value}")
             wct.DestroyWindow(self.native_dlg_hwnd)
-            # self.native_dlg_hwnd should be set to None in WM_DESTROY
-        self.native_control_hwnds.clear()
+        self.native_control_hwnds.clear() # Cleared in WM_DESTROY of parent
 
     def _populate_native_dialog_with_controls(self):
         if not self.native_dlg_hwnd or self.native_dlg_hwnd.value == 0:
@@ -180,13 +201,15 @@ class DialogEditorFrame(customtkinter.CTkFrame):
             return
 
         for control_entry, control_hwnd_val in list(self.native_control_hwnds.items()):
-            if control_hwnd_val and control_hwnd_val.value != 0:
+            if control_hwnd_val and control_hwnd_val.value != 0: # Check if HWND is valid before using
                  print(f"Native control HWND {control_hwnd_val.value} for ID {control_entry.get_id_display()} should be auto-destroyed with parent.")
-            del self.native_control_hwnds[control_entry] # Remove from dict
-        self.native_control_hwnds.clear()
+            # No need to call DestroyWindow on children; parent destruction handles it.
+            # Only remove from our tracking dictionary.
+            if control_entry in self.native_control_hwnds: # Check existence before del
+                del self.native_control_hwnds[control_entry]
+        self.native_control_hwnds.clear() # Ensure it's empty before repopulating
 
-        h_instance = wct.GetModuleHandleW(None)
-        print("WARNING: DLU to Pixel conversion is NOT YET IMPLEMENTED. Control sizes/positions will be incorrect (using DLU values as pixels).")
+        h_instance = wct.GetModuleHandleW(None) # Re-fetch h_instance
 
         for control_entry in self.controls_copy:
             native_class_name_str = ""
@@ -203,34 +226,51 @@ class DialogEditorFrame(customtkinter.CTkFrame):
             control_id_int = 0
             if isinstance(control_entry.id_val, int):
                 control_id_int = control_entry.id_val
-            elif isinstance(control_entry.id_val, str) and control_entry.id_val.isdigit(): # Also allow string numbers
-                try: control_id_int = int(control_entry.id_val)
-                except ValueError: pass # Keep 0 if not a simple number string
-            elif isinstance(control_entry.id_val, str): # Symbolic ID
-                 # For CreateWindowEx, ID from HMENU must be numeric if parent is not a dialog.
-                 # For now, we'll use a hash or a generated number if it's a string.
-                 # This is a simplification; proper ID management for native controls is complex.
-                 print(f"Warning: Symbolic ID '{control_entry.id_val}' used for native control. Using hash. This may not be standard.")
-                 control_id_int = hash(control_entry.id_val) & 0xFFFF # Example simple conversion
+            elif isinstance(control_entry.id_val, str):
+                try: control_id_int = int(control_entry.id_val) # Handles "123"
+                except ValueError: # Symbolic ID
+                     print(f"Warning: Symbolic ID '{control_entry.id_val}' used for native control. Using hash. This may not be standard for non-dialog parents.")
+                     control_id_int = hash(control_entry.id_val) & 0xFFFF
 
             h_menu_id = wct.wintypes.HMENU(control_id_int)
             window_text = str(control_entry.text or "")
-            x, y, width, height = control_entry.x, control_entry.y, control_entry.width, control_entry.height
+
+            # Convert DLU to Pixels using MapDialogRect
+            dlu_rect = wct.RECT()
+            dlu_rect.left = control_entry.x
+            dlu_rect.top = control_entry.y
+            dlu_rect.right = control_entry.x + control_entry.width
+            dlu_rect.bottom = control_entry.y + control_entry.height
+
+            pixel_x, pixel_y, pixel_width, pixel_height = control_entry.x, control_entry.y, control_entry.width, control_entry.height # Fallback
+            if self.native_dlg_hwnd and self.native_dlg_hwnd.value != 0: # Ensure parent HWND is valid
+                if not wct.MapDialogRect(self.native_dlg_hwnd, ctypes.byref(dlu_rect)):
+                    print(f"Warning: MapDialogRect failed for control ID {control_entry.get_id_display()}. Error: {ctypes.get_last_error()}. Using raw DLU values as pixels.")
+                else:
+                    pixel_x = dlu_rect.left
+                    pixel_y = dlu_rect.top
+                    pixel_width = dlu_rect.right - dlu_rect.left
+                    pixel_height = dlu_rect.bottom - dlu_rect.top
+                    if pixel_width < 0: pixel_width = 0
+                    if pixel_height < 0: pixel_height = 0
+            else:
+                 print("Warning: Parent native_dlg_hwnd is invalid for MapDialogRect. Using raw DLU values.")
+
 
             control_hwnd = wct.CreateWindowExW(
                 control_entry.ex_style, native_class_name_str, window_text, dw_style,
-                x, y, width, height, self.native_dlg_hwnd, h_menu_id, h_instance, None )
+                pixel_x, pixel_y, pixel_width, pixel_height,
+                self.native_dlg_hwnd, h_menu_id, h_instance, None )
 
             if control_hwnd and control_hwnd.value != 0:
                 self.native_control_hwnds[control_entry] = control_hwnd
-                print(f"Created native control: Class='{native_class_name_str}', Text='{window_text[:20]}', ID={control_id_int}, HWND={control_hwnd.value}")
+                print(f"Created native control: Class='{native_class_name_str}', Text='{window_text[:20]}', ID={control_id_int}, HWND={control_hwnd.value}, Pos=({pixel_x},{pixel_y}), Size=({pixel_width}x{pixel_height})")
             else:
                 err = ctypes.get_last_error()
                 print(f"Failed to create native control: Class='{native_class_name_str}', Text='{window_text[:20]}', ID={control_id_int}. Error: {err}")
 
 
     def render_dialog_preview(self):
-        # ... (current CTk rendering logic)
         if hasattr(self, 'destroy_win32_preview'):
             self.destroy_win32_preview()
         for widget in self.hwnd_host_frame.winfo_children():

@@ -269,6 +269,14 @@ PostQuitMessage = user32.PostQuitMessage # Added
 PostQuitMessage.restype = None
 PostQuitMessage.argtypes = [ctypes.c_int]
 
+MapDialogRect = user32.MapDialogRect
+MapDialogRect.restype = wintypes.BOOL
+MapDialogRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+
+GetDialogBaseUnits = user32.GetDialogBaseUnits
+GetDialogBaseUnits.restype = wintypes.LONG
+# No argtypes as it takes no arguments
+
 
 # --- GDI32 Functions ---
 CreateCompatibleDC = gdi32.CreateCompatibleDC
