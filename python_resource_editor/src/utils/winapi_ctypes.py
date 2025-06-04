@@ -118,9 +118,9 @@ UpdateResourceW = kernel32.UpdateResourceW
 UpdateResourceW.restype = wintypes.BOOL
 UpdateResourceW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.LPWSTR, wintypes.WORD, LPVOID, wintypes.DWORD]
 
-EndUpdateResourcesW = kernel32.EndUpdateResourcesW
-EndUpdateResourcesW.restype = wintypes.BOOL
-EndUpdateResourcesW.argtypes = [wintypes.HANDLE, wintypes.BOOL]
+EndUpdateResourceW = kernel32.EndUpdateResourceW
+EndUpdateResourceW.restype = wintypes.BOOL
+EndUpdateResourceW.argtypes = [wintypes.HANDLE, wintypes.BOOL]
 
 GetModuleHandleW = kernel32.GetModuleHandleW
 GetModuleHandleW.restype = wintypes.HMODULE
@@ -137,7 +137,7 @@ DestroyWindow.restype = wintypes.BOOL
 DestroyWindow.argtypes = [wintypes.HWND]
 
 DefDlgProcW = user32.DefDlgProcW
-DefDlgProcW.restype = wintypes.LRESULT
+DefDlgProcW.restype = wintypes.LPARAM
 DefDlgProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 
 SetParent = user32.SetParent
