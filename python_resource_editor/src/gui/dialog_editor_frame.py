@@ -309,7 +309,10 @@ class DialogEditorFrame(customtkinter.CTkFrame):
             if isinstance(widget, tkinter.Listbox):
                  widget.configure(relief="solid" if is_selected else "flat", borderwidth=2 if is_selected else 0)
             else: # CTk widgets
-                try: widget.configure(border_width=border_width, border_color=border_color)
+                effective_border_color = border_color
+                if effective_border_color is None:
+                    effective_border_color = "transparent"
+                try: widget.configure(border_width=border_width, border_color=effective_border_color)
                 except tkinter.TclError: pass # Some CTk widgets might not support border_color=None
 
 
@@ -430,7 +433,6 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         # For now, using some common combinations. ES_LEFT, SS_LEFT, SBS_HORZ are often 0.
 
         dialog = customtkinter.CTkInputDialog(text="Enter control type:", title="Add Control",
-                                             button_text="Next",
                                              # This InputDialog doesn't support combobox directly.
                                              # We'll ask for text and validate. A custom dialog would be better for fixed choices.
                                              # For now, let's list the options in the prompt.

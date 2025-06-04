@@ -689,7 +689,7 @@ class App(customtkinter.CTk):
                 try:
                     self.resources.remove(res_obj); self.populate_treeview(); self.set_app_dirty(True); self._clear_editor_frame(); self.current_selected_resource_item_id = None
                     if self.editmenu_reference: self.editmenu_reference.entryconfig("Delete Resource", state="disabled")
-                    self.show_status(f"Resource '{res_obj.identifier.name_id_to_str()}' deleted.", 3000)
+                    self.show_status(f"Resource '{str(res_obj.identifier.name_id)}' deleted.", 3000)
                 except ValueError:
                     self.show_error_message("Delete Error", "Could not find resource in list.")
                     self.show_status("Error deleting resource.", 5000, is_error=True)
