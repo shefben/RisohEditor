@@ -115,11 +115,13 @@ bool DialogItem::LoadFromStream(const MByteStreamEx& stream, bool extended)
     m_siz.cy = item.cy;
     m_id = item.id;
 
-    if (!stream.ReadString(m_class) ||
-        !stream.ReadString(m_title))
-    {
+    if (!stream.ReadString(m_class))
         return false;
-    }
+    stream.ReadDwordAlignment(); // Added
+
+    if (!stream.ReadString(m_title))
+        return false;
+    stream.ReadDwordAlignment(); // Added
 
     BYTE b;
     if (!stream.ReadByte(b))
@@ -131,13 +133,14 @@ bool DialogItem::LoadFromStream(const MByteStreamEx& stream, bool extended)
         if (!stream.ReadData(&m_extra[0], b))
             return false;
     }
+    stream.ReadDwordAlignment(); // Added
 
     return true;
 }
 
 bool DialogItem::LoadFromStreamEx(const MByteStreamEx& stream)
 {
-    stream.ReadDwordAlignment();
+    stream.ReadDwordAlignment(); // Existing, before DLGITEMTEMPLATEEXHEAD
 
     DLGITEMTEMPLATEEXHEAD item;
     if (!stream.ReadRaw(item))
@@ -154,12 +157,15 @@ bool DialogItem::LoadFromStreamEx(const MByteStreamEx& stream)
     m_siz.cy = item.cy;
     m_id = item.id;
 
-    stream.ReadDwordAlignment();
+    stream.ReadDwordAlignment(); // Existing, after DLGITEMTEMPLATEEXHEAD, before m_class
 
-    if (!stream.ReadString(m_class) || !stream.ReadString(m_title))
-    {
+    if (!stream.ReadString(m_class))
         return false;
-    }
+    stream.ReadDwordAlignment(); // Added
+
+    if (!stream.ReadString(m_title))
+        return false;
+    stream.ReadDwordAlignment(); // Added
 
     WORD extraCount;
     if (!stream.ReadWord(extraCount))
@@ -171,6 +177,7 @@ bool DialogItem::LoadFromStreamEx(const MByteStreamEx& stream)
         if (!stream.ReadData(&m_extra[0], extraCount))
             return false;
     }
+    stream.ReadDwordAlignment(); // Added
 
     return true;
 }
@@ -720,7 +727,7 @@ bool DialogRes::LoadFromStream(const MByteStreamEx& stream)
             for (UINT i = 0; i < m_cItems; ++i)
             {
                 DialogItem item;
-                if (!item.LoadFromStream(stream))
+                if (!item.LoadFromStream(stream)) // Will call the modified LoadFromStream
                     return false;
                 m_items.push_back(item);
             }

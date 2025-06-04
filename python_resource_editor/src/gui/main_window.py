@@ -524,6 +524,140 @@ class App(customtkinter.CTk):
                 self.current_editor_widget = info_textbox
                 info_text_parts = [] # Clear to prevent display by the final generic info_label
 
+            elif res_obj.identifier.type_id == RT_CURSOR:
+                # Clear previous editor content first
+                self._clear_editor_frame() # Ensures old content is gone
+                info_text_parts = [f"Type: Cursor (RT_CURSOR)", f"Name/ID: {res_obj.identifier.name_id_to_str()}", f"Language: {res_obj.identifier.language_id_to_str()}"]
+                ctk_image_created = False # Flag to track if image is displayed
+
+                if res_obj.data:
+                    presbits = ctypes.cast(res_obj.data, ctypes.POINTER(wct.wintypes.BYTE))
+                    h_cursor = wct.CreateIconFromResourceEx(presbits, len(res_obj.data), False, 0x00030000, 0, 0, wct.LR_DEFAULTCOLOR)
+                    if h_cursor:
+                        hotspot_info_str = "Hotspot: N/A"
+                        temp_icon_info_for_hotspot = wct.ICONINFO()
+                        if wct.GetIconInfoW(h_cursor, ctypes.byref(temp_icon_info_for_hotspot)):
+                            hotspot_info_str = f"Hotspot: ({temp_icon_info_for_hotspot.xHotspot}, {temp_icon_info_for_hotspot.yHotspot})"
+                            if temp_icon_info_for_hotspot.hbmMask: wct.DeleteObject(temp_icon_info_for_hotspot.hbmMask)
+                            if temp_icon_info_for_hotspot.hbmColor: wct.DeleteObject(temp_icon_info_for_hotspot.hbmColor)
+
+                        pil_img = hicon_to_pil_image(h_cursor)
+                        wct.DestroyIcon(h_cursor)
+
+                        if pil_img:
+                            max_dim_display = 256
+                            if pil_img.width > max_dim_display or pil_img.height > max_dim_display:
+                                pil_img.thumbnail((max_dim_display, max_dim_display))
+
+                            # Ensure transparency is handled if mode is RGBA
+                            if pil_img.mode == 'RGBA':
+                                ctk_image = customtkinter.CTkImage(light_image=pil_img, dark_image=pil_img, size=(pil_img.width, pil_img.height))
+                            else: # Fallback for modes without alpha, or convert
+                                pil_img_rgba = pil_img.convert("RGBA")
+                                ctk_image = customtkinter.CTkImage(light_image=pil_img_rgba, dark_image=pil_img_rgba, size=(pil_img_rgba.width, pil_img_rgba.height))
+
+                            image_label = customtkinter.CTkLabel(self.editor_frame, image=ctk_image, text="")
+                            image_label.pack(padx=10, pady=10, expand=True, anchor="center")
+                            current_info_text = f"Displayed via ctypes. Size: {pil_img.width}x{pil_img.height}. {hotspot_info_str}"
+                            info_text_parts.append(current_info_text)
+                            ctk_image_created = True
+                        else:
+                            info_text_parts.append(f"Failed to convert HCURSOR to PIL Image. {hotspot_info_str}")
+                            info_text_parts.append(f"Data (Hex, first 64B): {res_obj.data[:64].hex(' ', 8)}")
+                    else:
+                        err = ctypes.get_last_error()
+                        info_text_parts.append(f"CreateIconFromResourceEx for cursor failed (Error {err}).")
+                        info_text_parts.append(f"Data (Hex, first 64B): {res_obj.data[:64].hex(' ', 8)}")
+                else:
+                    info_text_parts.append("No data for cursor resource.")
+
+                # Display collected info text
+                final_info_text_cursor = "\n".join(info_text_parts)
+                if not ctk_image_created: # If no image shown, display all info in textbox
+                    info_textbox = customtkinter.CTkTextbox(self.editor_frame, wrap="word", font=("monospace", 10))
+                    info_textbox.pack(expand=True, fill="both", padx=5, pady=5)
+                    info_textbox.insert("1.0", final_info_text_cursor)
+                    info_textbox.configure(state="disabled")
+                    self.current_editor_widget = info_textbox
+                else: # Image shown, just update status with the last important line
+                    self.show_status(info_text_parts[-1] if info_text_parts else "Cursor displayed.", 5000)
+                info_text_parts = []
+
+            elif res_obj.identifier.type_id == RT_GROUP_CURSOR:
+                self._clear_editor_frame()
+                info_text_parts = [f"Type: Group Cursor (RT_GROUP_CURSOR)", f"Name/ID: {res_obj.identifier.name_id_to_str()}", f"Language: {res_obj.identifier.language_id_to_str()}"]
+                ctk_image_created_g = False
+
+                if res_obj.data:
+                    pgroupbits = ctypes.cast(res_obj.data, ctypes.POINTER(wct.wintypes.BYTE))
+                    member_id = wct.LookupIconIdFromDirectoryEx(pgroupbits, False, 0, 0, wct.LR_DEFAULTCOLOR)
+
+                    if member_id != 0:
+                        info_text_parts.append(f"LookupIconIdFromDirectoryEx found member ID: {member_id}")
+                        actual_cursor_resource = None
+                        for r_search in self.resources:
+                            if str(r_search.identifier.name_id) == str(member_id) and r_search.identifier.type_id == RT_CURSOR:
+                                if r_search.identifier.language_id == res_obj.identifier.language_id or \
+                                   res_obj.identifier.language_id == LANG_NEUTRAL or \
+                                   r_search.identifier.language_id == LANG_NEUTRAL:
+                                    actual_cursor_resource = r_search
+                                    if r_search.identifier.language_id == res_obj.identifier.language_id: break
+
+                        if actual_cursor_resource and actual_cursor_resource.data:
+                            info_text_parts.append(f"Found member RT_CURSOR: ID {actual_cursor_resource.identifier.name_id}, Lang {actual_cursor_resource.identifier.language_id}")
+                            member_presbits = ctypes.cast(actual_cursor_resource.data, ctypes.POINTER(wct.wintypes.BYTE))
+                            h_member_cursor = wct.CreateIconFromResourceEx(member_presbits, len(actual_cursor_resource.data), False, 0x00030000, 0, 0, wct.LR_DEFAULTCOLOR)
+
+                            if h_member_cursor:
+                                temp_icon_info_gcursor = wct.ICONINFO()
+                                hotspot_info_gstr = "Hotspot: N/A"
+                                if wct.GetIconInfoW(h_member_cursor, ctypes.byref(temp_icon_info_gcursor)):
+                                    hotspot_info_gstr = f"Hotspot: ({temp_icon_info_gcursor.xHotspot}, {temp_icon_info_gcursor.yHotspot})"
+                                    if temp_icon_info_gcursor.hbmMask: wct.DeleteObject(temp_icon_info_gcursor.hbmMask)
+                                    if temp_icon_info_gcursor.hbmColor: wct.DeleteObject(temp_icon_info_gcursor.hbmColor)
+
+                                pil_img = hicon_to_pil_image(h_member_cursor)
+                                wct.DestroyIcon(h_member_cursor)
+                                if pil_img:
+                                    max_dim_display = 256
+                                    if pil_img.width > max_dim_display or pil_img.height > max_dim_display:
+                                        pil_img.thumbnail((max_dim_display, max_dim_display))
+
+                                    if pil_img.mode == 'RGBA':
+                                        ctk_image = customtkinter.CTkImage(light_image=pil_img, dark_image=pil_img, size=(pil_img.width, pil_img.height))
+                                    else:
+                                        pil_img_rgba = pil_img.convert("RGBA")
+                                        ctk_image = customtkinter.CTkImage(light_image=pil_img_rgba, dark_image=pil_img_rgba, size=(pil_img_rgba.width, pil_img_rgba.height))
+
+                                    image_label = customtkinter.CTkLabel(self.editor_frame, image=ctk_image, text="")
+                                    image_label.pack(padx=10, pady=10, expand=True, anchor="center")
+                                    current_info_text_g = f"Displayed member cursor via ctypes. Size: {pil_img.width}x{pil_img.height}. {hotspot_info_gstr}"
+                                    info_text_parts.append(current_info_text_g)
+                                    ctk_image_created_g = True
+                                else:
+                                    info_text_parts.append(f"Failed to convert member HCURSOR to PIL Image. {hotspot_info_gstr}")
+                            else:
+                                err = ctypes.get_last_error()
+                                info_text_parts.append(f"CreateIconFromResourceEx for member cursor failed (Error {err}).")
+                        else:
+                            info_text_parts.append(f"Member RT_CURSOR (ID: {member_id}) not found or has no data.")
+                    else:
+                        err = ctypes.get_last_error()
+                        info_text_parts.append(f"LookupIconIdFromDirectoryEx for group cursor failed (Error {err}).")
+                else:
+                    info_text_parts.append("No data for group cursor resource.")
+
+                final_info_text_gcursor = "\n".join(info_text_parts)
+                if not ctk_image_created_g:
+                    info_textbox = customtkinter.CTkTextbox(self.editor_frame, wrap="word", font=("monospace", 10))
+                    info_textbox.pack(expand=True, fill="both", padx=5, pady=5)
+                    info_textbox.insert("1.0", final_info_text_gcursor)
+                    info_textbox.configure(state="disabled")
+                    self.current_editor_widget = info_textbox
+                else:
+                     self.show_status(info_text_parts[-1] if info_text_parts else "Group cursor member displayed.", 5000)
+                info_text_parts = []
+
             elif is_image_type: # Handles RT_ICON, RT_BITMAP, RT_CURSOR (non-group)
                 try:
                     img_data = None
