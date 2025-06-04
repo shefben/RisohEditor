@@ -15,7 +15,8 @@ wintypes.INT_PTR = ctypes.c_ssize_t # For pointer-sized integers, suitable for I
 # Window Messages
 WM_INITDIALOG = 0x0110
 WM_COMMAND = 0x0111
-WM_CLOSE = 0x0010
+WM_CLOSE = 0x0010 # Already defined
+WM_DESTROY = 0x0002 # Added
 
 # GetWindowLong/SetWindowLong Indeces
 GWL_STYLE = -16
@@ -23,14 +24,18 @@ GWL_EXSTYLE = -20
 
 # Window Styles
 WS_CHILD = 0x40000000
-WS_VISIBLE = 0x10000000
+WS_VISIBLE = 0x10000000 # Already defined
 WS_POPUP = 0x80000000
 WS_CAPTION = 0x00C00000
 WS_SYSMENU = 0x00080000
 WS_THICKFRAME = 0x00040000
+CS_HREDRAW = 0x0002 # Added
+CS_VREDRAW = 0x0001 # Added
+WS_OVERLAPPEDWINDOW = 0x00CF0000 # Added
+CW_USEDEFAULT = 0x80000000 # Added (Note: This is an int, not a pointer)
 
 # Dialog Specific Styles
-DS_CONTROL = 0x0400 # Dialog specific style, might be useful
+DS_CONTROL = 0x0400
 SW_SHOW = 5
 
 # SetWindowPos Flags
@@ -47,13 +52,26 @@ DIB_RGB_COLORS = 0
 # LoadImage/CreateIconFromResourceEx flags
 LR_DEFAULTCOLOR = 0x00000000
 LR_MONOCHROME = 0x00000001
-LR_LOADFROMFILE = 0x00000010 # Example, not directly used yet but good to have related flags
-LR_SHARED = 0x00008000 # Example
+LR_LOADFROMFILE = 0x00000010
+LR_SHARED = 0x00008000
 
 # Image types (for LoadImage)
 IMAGE_BITMAP = 0
 IMAGE_ICON = 1
 IMAGE_CURSOR = 2
+
+# Cursor IDs (for LoadCursorW)
+IDC_ARROW = 32512
+
+# Icon IDs (for LoadIconW)
+IDI_APPLICATION = 32512
+
+# System Colors
+COLOR_WINDOW = 5 # Added
+
+# Error Codes
+ERROR_CLASS_ALREADY_EXISTS = 1410 # Added
+
 
 # --- Structures ---
 class RECT(ctypes.Structure):
@@ -101,9 +119,23 @@ class BITMAPINFO(ctypes.Structure):
     _fields_ = [("bmiHeader", BITMAPINFOHEADER),
                 ("bmiColors", RGBQUAD * 1)]
 
-
-# DLGPROC type definition
+# Window Procedure and Dialog Procedure types
+WNDPROC = ctypes.WINFUNCTYPE(wintypes.INT_PTR, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM) # Changed to INT_PTR
 DLGPROC = ctypes.WINFUNCTYPE(wintypes.INT_PTR, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+
+class WNDCLASSEXW(ctypes.Structure): # Added
+    _fields_ = [("cbSize", wintypes.UINT),
+                ("style", wintypes.UINT),
+                ("lpfnWndProc", WNDPROC),
+                ("cbClsExtra", ctypes.c_int),
+                ("cbWndExtra", ctypes.c_int),
+                ("hInstance", wintypes.HINSTANCE),
+                ("hIcon", wintypes.HICON),
+                ("hCursor", wintypes.HCURSOR),
+                ("hbrBackground", wintypes.HBRUSH),
+                ("lpszMenuName", wintypes.LPCWSTR),
+                ("lpszClassName", wintypes.LPCWSTR),
+                ("hIconSm", wintypes.HICON)]
 
 
 # Helper function to create resource strings (LPWSTR) for integer IDs
@@ -129,6 +161,16 @@ GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 
 
 # --- User32 Functions ---
+RegisterClassExW = user32.RegisterClassExW # Added
+RegisterClassExW.restype = wintypes.ATOM
+RegisterClassExW.argtypes = [ctypes.POINTER(WNDCLASSEXW)]
+
+CreateWindowExW = user32.CreateWindowExW # Added
+CreateWindowExW.restype = wintypes.HWND
+CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+                            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                            wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, LPVOID]
+
 CreateDialogIndirectParamW = user32.CreateDialogIndirectParamW
 CreateDialogIndirectParamW.restype = wintypes.HWND
 CreateDialogIndirectParamW.argtypes = [wintypes.HINSTANCE, LPVOID, wintypes.HWND, DLGPROC, wintypes.LPARAM]
@@ -137,8 +179,12 @@ DestroyWindow = user32.DestroyWindow
 DestroyWindow.restype = wintypes.BOOL
 DestroyWindow.argtypes = [wintypes.HWND]
 
+DefWindowProcW = user32.DefWindowProcW # Added
+DefWindowProcW.restype = wintypes.LPARAM
+DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+
 DefDlgProcW = user32.DefDlgProcW
-DefDlgProcW.restype = wintypes.LPARAM
+DefDlgProcW.restype = wintypes.LPARAM # Corrected as per previous subtask (matches WNDPROC return)
 DefDlgProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 
 SetParent = user32.SetParent
@@ -153,9 +199,13 @@ SetWindowLongW = user32.SetWindowLongW
 SetWindowLongW.restype = wintypes.LONG
 SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.LONG]
 
-ShowWindow = user32.ShowWindow
+ShowWindow = user32.ShowWindow # Verified Present
 ShowWindow.restype = wintypes.BOOL
 ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+
+UpdateWindow = user32.UpdateWindow # Added
+UpdateWindow.restype = wintypes.BOOL
+UpdateWindow.argtypes = [wintypes.HWND]
 
 MoveWindow = user32.MoveWindow
 MoveWindow.restype = wintypes.BOOL
@@ -168,13 +218,13 @@ SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_in
 CreateIconFromResourceEx = user32.CreateIconFromResourceEx
 CreateIconFromResourceEx.restype = wintypes.HICON
 CreateIconFromResourceEx.argtypes = [
-    ctypes.POINTER(wintypes.BYTE), # presbits
-    wintypes.DWORD,             # dwResSize
-    wintypes.BOOL,              # fIcon
-    wintypes.DWORD,             # dwVer
-    ctypes.c_int,               # cxDesired
-    ctypes.c_int,               # cyDesired
-    wintypes.UINT               # uFlags
+    ctypes.POINTER(wintypes.BYTE),
+    wintypes.DWORD,
+    wintypes.BOOL,
+    wintypes.DWORD,
+    ctypes.c_int,
+    ctypes.c_int,
+    wintypes.UINT
 ]
 
 LookupIconIdFromDirectoryEx = user32.LookupIconIdFromDirectoryEx
@@ -187,13 +237,38 @@ LookupIconIdFromDirectoryEx.argtypes = [
     wintypes.UINT
 ]
 
-GetIconInfo = user32.GetIconInfo # Corrected name
+GetIconInfo = user32.GetIconInfo
 GetIconInfo.restype = wintypes.BOOL
-GetIconInfo.argtypes = [wintypes.HICON, ctypes.POINTER(ICONINFO)] # ICONINFO should already be defined
+GetIconInfo.argtypes = [wintypes.HICON, ctypes.POINTER(ICONINFO)]
 
 DestroyIcon = user32.DestroyIcon
 DestroyIcon.restype = wintypes.BOOL
 DestroyIcon.argtypes = [wintypes.HICON]
+
+LoadCursorW = user32.LoadCursorW # Added
+LoadCursorW.restype = wintypes.HCURSOR
+LoadCursorW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR]
+
+LoadIconW = user32.LoadIconW # Added
+LoadIconW.restype = wintypes.HICON
+LoadIconW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR]
+
+GetMessageW = user32.GetMessageW # Added
+GetMessageW.restype = wintypes.BOOL
+GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
+
+TranslateMessage = user32.TranslateMessage # Added
+TranslateMessage.restype = wintypes.BOOL
+TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+
+DispatchMessageW = user32.DispatchMessageW # Added
+DispatchMessageW.restype = wintypes.LPARAM
+DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+
+PostQuitMessage = user32.PostQuitMessage # Added
+PostQuitMessage.restype = None
+PostQuitMessage.argtypes = [ctypes.c_int]
+
 
 # --- GDI32 Functions ---
 CreateCompatibleDC = gdi32.CreateCompatibleDC
@@ -231,7 +306,6 @@ GetObjectW.argtypes = [wintypes.HANDLE, ctypes.c_int, LPVOID]
 
 if __name__ == '__main__':
     print("winapi_ctypes.py loaded.")
-    # ... (rest of the existing test code can be kept or adapted) ...
     print(f"CreateIconFromResourceEx: {CreateIconFromResourceEx}")
     print(f"GetDIBits: {GetDIBits}")
     try:

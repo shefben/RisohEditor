@@ -3,8 +3,8 @@ import tkinter
 from tkinter import simpledialog, messagebox, colorchooser
 from typing import List, Dict, Callable, Optional, Union, Tuple
 import copy
-import ctypes # Kept for winapi_ctypes if used elsewhere
-from ..utils import winapi_ctypes as wct # Kept for DLGPROC and other types
+import ctypes
+from ..utils import winapi_ctypes as wct
 from ..core.resource_base import RT_DIALOG
 
 from ..core.dialog_parser_util import DialogProperties, DialogControlEntry
@@ -34,13 +34,19 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         self.preview_widgets: Dict[DialogControlEntry, Union[customtkinter.CTkBaseClass, tkinter.Listbox]] = {}
         self._drag_data = {"widget": None, "control_entry": None, "start_x_widget": 0, "start_y_widget": 0, "start_x_event_root":0, "start_y_event_root":0}
 
-        self.current_preview_hwnd = None
-        self.py_dialog_proc = wct.DLGPROC(self._preview_dialog_proc_impl)
+        # For CTk-based preview (currently active)
+        self.current_preview_hwnd = None # This was for HWND-based preview, might be reused or removed if only CTk
+        self.py_dialog_proc = wct.DLGPROC(self._preview_dialog_proc_impl) # For HWND-based preview
         self.lpTemplate_buffer = None
 
         # Resize specific attributes
         self.resize_handle_widget: Optional[customtkinter.CTkFrame] = None
         self._resize_drag_data = {"widget": None, "control_entry": None, "start_x_event_root": 0, "start_y_event_root": 0, "start_width": 0, "start_height": 0}
+
+        # For external native window
+        self.native_dlg_hwnd: Optional[wct.wintypes.HWND] = None
+        self.native_wnd_proc_ref = wct.WNDPROC(self._external_dialog_wnd_proc) # Keep reference
+        self.external_window_class_name = f"PyNativeDialogHost_{id(self)}" # Unique class name per instance
 
 
         self.grid_columnconfigure(0, weight=2)
@@ -82,33 +88,120 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         customtkinter.CTkButton(action_button_frame, text="Delete Control", command=self.on_delete_control).grid(row=0, column=1, padx=5)
         customtkinter.CTkButton(action_button_frame, text="Apply All to Resource", command=self.apply_all_changes_to_resource).grid(row=0, column=3, padx=5)
 
+        # Test button for native window
+        customtkinter.CTkButton(action_button_frame, text="Show Native Window", command=self._create_external_native_window).grid(row=0, column=2, padx=5)
+
+
         self.render_dialog_preview()
         self.display_dialog_properties()
+        # self._create_external_native_window() # Call for testing - moved to a button for now
 
-    def destroy_win32_preview(self):
-        if hasattr(self, 'current_preview_hwnd') and self.current_preview_hwnd:
-            hwnd_val = 0
-            if isinstance(self.current_preview_hwnd, wct.wintypes.HWND): hwnd_val = self.current_preview_hwnd.value
-            elif isinstance(self.current_preview_hwnd, int): hwnd_val = self.current_preview_hwnd
-            if hwnd_val != 0: wct.DestroyWindow(wct.wintypes.HWND(hwnd_val))
+    def destroy_win32_preview(self): # Legacy name, was for embedded preview
+        if hasattr(self, 'current_preview_hwnd') and self.current_preview_hwnd and self.current_preview_hwnd.value != 0:
+            wct.DestroyWindow(self.current_preview_hwnd)
             self.current_preview_hwnd = None
-        if hasattr(self, 'lpTemplate_buffer'): self.lpTemplate_buffer = None
+        if hasattr(self, 'lpTemplate_buffer'):
+            self.lpTemplate_buffer = None
 
     def _preview_dialog_proc_impl(self, hwnd: wct.wintypes.HWND, uMsg: wct.wintypes.UINT, wParam: wct.wintypes.WPARAM, lParam: wct.wintypes.LPARAM) -> wct.wintypes.INT_PTR:
+        # This DLGPROC is for the (currently unused) embedded HWND preview
         if uMsg == wct.WM_INITDIALOG: return True
         return False
 
+    def _external_dialog_wnd_proc(self, hwnd: wct.wintypes.HWND, uMsg: wct.wintypes.UINT, wParam: wct.wintypes.WPARAM, lParam: wct.wintypes.LPARAM) -> wct.wintypes.LPARAM:
+        if uMsg == wct.WM_DESTROY:
+            print(f"External native dialog WM_DESTROY received for HWND {hwnd.value if hwnd else 'N/A'}")
+            if self.native_dlg_hwnd and hasattr(hwnd, 'value') and self.native_dlg_hwnd.value == hwnd.value:
+                self.native_dlg_hwnd = None
+            return wct.wintypes.LPARAM(0)
+        elif uMsg == wct.WM_CLOSE:
+            print(f"External native dialog WM_CLOSE received for HWND {hwnd.value if hwnd else 'N/A'}")
+            if hwnd: wct.DestroyWindow(hwnd)
+            return wct.wintypes.LPARAM(0)
+
+        return wct.DefWindowProcW(hwnd, uMsg, wParam, lParam)
+
+    def _create_external_native_window(self):
+        if self.native_dlg_hwnd and self.native_dlg_hwnd.value != 0 :
+            print("Attempting to focus existing external native window.")
+            # Example focus logic (might need more robust handling)
+            # if wct.user32.IsIconic(self.native_dlg_hwnd):
+            #     wct.ShowWindow(self.native_dlg_hwnd, 9) # SW_RESTORE
+            # wct.user32.SetForegroundWindow(self.native_dlg_hwnd) # Requires process attachment on some OS versions
+            # For now, simple ShowWindow and SetFocus might be enough or just print.
+            wct.ShowWindow(self.native_dlg_hwnd, wct.SW_SHOW)
+            wct.user32.SetFocus(self.native_dlg_hwnd)
+            return
+
+        h_instance = wct.GetModuleHandleW(None)
+
+        wc = wct.WNDCLASSEXW()
+        wc.cbSize = ctypes.sizeof(wct.WNDCLASSEXW)
+        wc.style = wct.CS_HREDRAW | wct.CS_VREDRAW
+        wc.lpfnWndProc = self.native_wnd_proc_ref
+        wc.cbClsExtra = 0
+        wc.cbWndExtra = 0
+        wc.hInstance = h_instance
+        wc.hIcon = wct.LoadIconW(None, wct.MAKEINTRESOURCE(wct.IDI_APPLICATION))
+        wc.hCursor = wct.LoadCursorW(None, wct.MAKEINTRESOURCE(wct.IDC_ARROW))
+        wc.hbrBackground = ctypes.cast(wct.COLOR_WINDOW + 1, wct.wintypes.HBRUSH)
+        wc.lpszMenuName = None
+        wc.lpszClassName = self.external_window_class_name
+        wc.hIconSm = wct.LoadIconW(None, wct.MAKEINTRESOURCE(wct.IDI_APPLICATION))
+
+        if not wct.RegisterClassExW(ctypes.byref(wc)):
+            err = ctypes.get_last_error()
+            if err != wct.ERROR_CLASS_ALREADY_EXISTS:
+                print(f"Failed to register window class '{self.external_window_class_name}': Error {err}")
+                return
+
+        dialog_title = str(self.dialog_props_copy.caption or "Native Dialog Editor")
+
+        self.native_dlg_hwnd = wct.CreateWindowExW(
+            0, # dwExStyle
+            self.external_window_class_name,
+            dialog_title,
+            wct.WS_OVERLAPPEDWINDOW | wct.WS_VISIBLE,
+            wct.CW_USEDEFAULT, wct.CW_USEDEFAULT,
+            500, 400, # width, height
+            None, # hWndParent
+            None, # hMenu
+            h_instance,
+            None # lpParam
+        )
+
+        if not self.native_dlg_hwnd or self.native_dlg_hwnd.value == 0:
+            print(f"Failed to create external native window: {ctypes.get_last_error()}")
+            self.native_dlg_hwnd = None # Ensure it's None on failure
+        else:
+            print(f"External native window '{dialog_title}' created with HWND: {self.native_dlg_hwnd.value}")
+            # WS_VISIBLE should show it, but explicit ShowWindow/UpdateWindow can be added if needed
+            # wct.ShowWindow(self.native_dlg_hwnd, wct.SW_SHOW)
+            # wct.UpdateWindow(self.native_dlg_hwnd)
+
+    def destroy_external_native_window(self):
+        if self.native_dlg_hwnd and self.native_dlg_hwnd.value != 0:
+            print(f"Destroying external native window: {self.native_dlg_hwnd.value}")
+            wct.DestroyWindow(self.native_dlg_hwnd) # This will trigger WM_DESTROY, which should set self.native_dlg_hwnd to None
+            # self.native_dlg_hwnd = None # Redundant if WM_DESTROY handles it, but safe.
+        # Class unregistration could be done on app exit if class names are unique enough or on frame destruction.
+        # For instance-specific class names, unregistering on frame destroy is good practice.
+        # if hasattr(self, 'external_window_class_name') and self.external_window_class_name:
+        #     h_instance = wct.GetModuleHandleW(None)
+        #     if not wct.user32.UnregisterClassW(self.external_window_class_name, h_instance):
+        #         print(f"Failed to unregister window class '{self.external_window_class_name}': {ctypes.get_last_error()}")
+
+
     def render_dialog_preview(self):
         if hasattr(self, 'destroy_win32_preview'):
-            self.destroy_win32_preview()
+            self.destroy_win32_preview() # For old embedded HWND preview
 
         for widget in self.hwnd_host_frame.winfo_children():
             widget.destroy()
         self.preview_widgets.clear()
-        if self.resize_handle_widget: # Ensure old handle is gone
+        if self.resize_handle_widget:
             self.resize_handle_widget.destroy()
             self.resize_handle_widget = None
-
 
         self.title_bar_label.configure(text=str(self.dialog_props_copy.caption or "Dialog Preview"))
         self.title_bar_label.update_idletasks()
@@ -126,14 +219,13 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                 cn_str = control_entry.class_name.upper()
 
             widget_class = None
-            widget_params = {"master": self.hwnd_host_frame, "text": control_entry.text}
+            widget_params = {"master": self.hwnd_host_frame}
 
-            if cn_str == "BUTTON": widget_class = customtkinter.CTkButton
+            if cn_str == "BUTTON": widget_class = customtkinter.CTkButton; widget_params["text"] = control_entry.text
             elif cn_str == "EDIT":
                 widget_class = customtkinter.CTkEntry
                 widget_params["placeholder_text"] = control_entry.text
-                if "text" in widget_params: del widget_params["text"]
-            elif cn_str == "STATIC": widget_class = customtkinter.CTkLabel
+            elif cn_str == "STATIC": widget_class = customtkinter.CTkLabel; widget_params["text"] = control_entry.text
             elif cn_str == "LISTBOX":
                 widget_class = tkinter.Listbox
                 widget_params.update({"background": "#333333", "foreground": "white", "borderwidth":0, "highlightthickness":0})
@@ -141,18 +233,16 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                 widget_class = customtkinter.CTkComboBox
                 widget_params["values"] = [control_entry.text] if control_entry.text else ["Sample"]
                 widget_params["state"] = "readonly"
-                if "text" in widget_params: del widget_params["text"]
             elif cn_str == "SCROLLBAR":
                 widget_class = customtkinter.CTkScrollbar
-                widget_params.pop("text", None)
             elif cn_str in [cls.upper() for cls in KNOWN_STRING_CLASSES]:
                 widget_class = "placeholder_frame"
 
             preview_widget = None
-            widget_params_with_size = { **widget_params, "width": control_entry.width, "height": control_entry.height }
+            widget_constructor_params = { **widget_params, "width": control_entry.width, "height": control_entry.height }
 
             if widget_class == "placeholder_frame":
-                preview_widget = customtkinter.CTkFrame(self.hwnd_host_frame, border_width=1, fg_color="gray40",
+                preview_widget = customtkinter.CTkFrame(master=self.hwnd_host_frame, border_width=1, fg_color="gray40",
                                                       width=control_entry.width, height=control_entry.height)
                 display_class_name = control_entry.class_name if isinstance(control_entry.class_name, str) else ATOM_TO_CLASSNAME_MAP.get(control_entry.class_name, cn_str)
                 customtkinter.CTkLabel(preview_widget, text=f"{display_class_name}\n'{control_entry.text[:20]}' ({control_entry.get_id_display()})").pack(padx=2,pady=2, expand=True, fill="both")
@@ -162,29 +252,21 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                          preview_widget = widget_class(**widget_params)
                          preview_widget.insert("end", control_entry.text if control_entry.text else "Listbox Item")
                     elif widget_class in [customtkinter.CTkButton, customtkinter.CTkEntry, customtkinter.CTkLabel, customtkinter.CTkComboBox, customtkinter.CTkScrollbar]:
-                        preview_widget = widget_class(**widget_params_with_size)
-                    else: preview_widget = widget_class(**widget_params)
+                        preview_widget = widget_class(**widget_constructor_params)
+                    else: preview_widget = widget_class(**widget_constructor_params)
                 except Exception as e:
-                     preview_widget = customtkinter.CTkFrame(self.hwnd_host_frame, border_width=1, fg_color="red", width=control_entry.width, height=control_entry.height)
+                     print(f"Error creating widget for class '{cn_str}': {e}")
+                     preview_widget = customtkinter.CTkFrame(master=self.hwnd_host_frame, border_width=1, fg_color="red", width=control_entry.width, height=control_entry.height)
                      customtkinter.CTkLabel(preview_widget, text=f"ERR: {cn_str}").pack()
             else:
-                preview_widget = customtkinter.CTkFrame(self.hwnd_host_frame, border_width=1, fg_color="gray30", width=control_entry.width, height=control_entry.height)
+                preview_widget = customtkinter.CTkFrame(master=self.hwnd_host_frame, border_width=1, fg_color="gray30", width=control_entry.width, height=control_entry.height)
                 customtkinter.CTkLabel(preview_widget, text=f"Unknown: {cn_str}\n'{control_entry.text[:20]}'").pack(padx=2,pady=2, expand=True, fill="both")
 
             if preview_widget:
-                if isinstance(widget_class, str) and widget_class == "placeholder_frame": # Placeholder CTkFrame
-                    preview_widget.place(x=control_entry.x, y=control_entry.y) # Width/height already set in constructor
-                elif widget_class == tkinter.Listbox:
-                    # Listbox uses pixel width/height in .place()
-                    preview_widget.place(x=control_entry.x, y=control_entry.y,
-                                         width=control_entry.width, height=control_entry.height)
-                elif isinstance(preview_widget, customtkinter.CTkBaseClass): # Other CTk widgets
-                    # Width/Height already set in constructor for CTk widgets.
+                if widget_class == tkinter.Listbox:
+                    preview_widget.place(x=control_entry.x, y=control_entry.y, width=control_entry.width, height=control_entry.height)
+                else:
                     preview_widget.place(x=control_entry.x, y=control_entry.y)
-                else: # Fallback for any other type of widget if it sneaks through (should not happen)
-                    preview_widget.place(x=control_entry.x, y=control_entry.y,
-                                         width=control_entry.width, height=control_entry.height)
-
                 preview_widget.bind("<Button-1>", lambda e, widget=preview_widget, ctrl=control_entry: self.on_control_drag_start(e, widget, ctrl))
                 preview_widget.bind("<B1-Motion>", lambda e, widget=preview_widget, ctrl=control_entry: self.on_control_drag(e, widget, ctrl))
                 preview_widget.bind("<ButtonRelease-1>", lambda e, widget=preview_widget, ctrl=control_entry: self.on_control_drag_release(e, widget, ctrl))
@@ -194,6 +276,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         else: self.on_control_selected_on_preview(None)
 
     def on_control_drag_start(self, event, widget: Union[customtkinter.CTkBaseClass, tkinter.Listbox], control_entry: DialogControlEntry):
+        # ... (rest of methods remain the same)
         self.on_control_selected_on_preview(control_entry)
         self._drag_data["widget"] = widget
         self._drag_data["control_entry"] = control_entry
@@ -225,7 +308,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
 
     def on_resize_drag_start(self, event):
         if not self.selected_control_entry or not self.resize_handle_widget: return
-        selected_widget = event.widget.master # Resize handle is child of selected_widget
+        selected_widget = event.widget.master
         self._resize_drag_data["widget"] = selected_widget
         self._resize_drag_data["control_entry"] = self.selected_control_entry
         self._resize_drag_data["start_x_event_root"] = event.x_root
@@ -244,9 +327,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         new_height = max(10, self._resize_drag_data["start_height"] + delta_y)
         control_entry.width = new_width
         control_entry.height = new_height
-        widget.configure(width=new_width, height=new_height) # CTk widgets update size with configure
-        # For .place() based widgets, if their master isn't resizing, this is enough.
-        # The handle should stay in place due to relx/rely if widget.configure works as expected.
+        widget.configure(width=new_width, height=new_height)
         if 'width' in self.prop_widgets_map:
             self.prop_widgets_map['width'].delete(0, tkinter.END); self.prop_widgets_map['width'].insert(0, str(new_width))
         if 'height' in self.prop_widgets_map:
@@ -258,11 +339,10 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         self._resize_drag_data["widget"] = None
         self._resize_drag_data["control_entry"] = None
         if self.app_callbacks.get('set_dirty_callback'): self.app_callbacks['set_dirty_callback'](True)
-        # Refresh property pane to ensure it's perfectly synced if needed
         if self.selected_control_entry: self.display_control_properties(self.selected_control_entry)
 
-
     def _populate_props_pane(self, target_obj: Union[DialogProperties, DialogControlEntry]):
+        # ... (rest of method remains the same)
         for widget in self.props_frame.winfo_children(): widget.destroy()
         self.prop_widgets_map.clear()
         props_to_edit = []; is_dialog = isinstance(target_obj, DialogProperties)
@@ -297,6 +377,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         apply_button.pack(pady=10, padx=5)
 
     def _get_style_map_for_control(self, class_name_val: Union[str, int]) -> dict:
+        # ... (rest of method remains the same)
         class_str_lookup = ""
         if isinstance(class_name_val, int): class_str_lookup = ATOM_TO_CLASSNAME_MAP.get(class_name_val, "").upper()
         elif isinstance(class_name_val, str): class_str_lookup = class_name_val.upper()
@@ -306,6 +387,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         return {}
 
     def _display_decoded_styles(self, style_value: int, control_class_val: Optional[Union[str,int]], is_exstyle: bool):
+        # ... (rest of method remains the same)
         text_area = customtkinter.CTkTextbox(self.props_frame, height=80, font=("Segoe UI", 11), border_spacing=2)
         text_area.pack(fill="x", padx=5, pady=(0,5)); text_area.configure(state="normal")
         text_area.insert("1.0", "Known flags: "); found_flags = []
@@ -323,27 +405,23 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         text_area.insert("end", ", ".join(sorted(list(set(found_flags)))) if found_flags else "None recognized")
         text_area.configure(state="disabled")
 
-    def display_dialog_properties(self): # Called when dialog itself (background) is selected
+    def display_dialog_properties(self):
+        # ... (rest of method remains the same)
         self.selected_control_entry = None
         self._populate_props_pane(self.dialog_props_copy)
-        # Ensure no control is visually selected and no resize handle is shown
         self.on_control_selected_on_preview(None)
 
-    def display_control_properties(self, control_entry: DialogControlEntry): # Called when a control is selected
-        # self.selected_control_entry = control_entry # This is set by on_control_selected_on_preview
+    def display_control_properties(self, control_entry: DialogControlEntry):
+        # ... (rest of method remains the same)
         self._populate_props_pane(control_entry)
-        # Visual selection update is handled by on_control_selected_on_preview
-        # including resize handle creation.
 
     def on_control_selected_on_preview(self, control_entry: Optional[DialogControlEntry]):
+        # ... (rest of method remains the same, ensure resize handle is managed correctly)
         self.selected_control_entry = control_entry
-
-        # Update visual selection for all widgets
         for ctrl, widget_preview in self.preview_widgets.items():
             is_selected = (ctrl == control_entry)
             border_color = "cyan" if is_selected else None
             border_width = 2 if is_selected else 0
-
             if isinstance(widget_preview, tkinter.Listbox):
                  widget_preview.configure(borderwidth=border_width, relief=tkinter.SOLID if is_selected else tkinter.FLAT)
                  if is_selected: widget_preview.configure(highlightbackground=border_color, highlightcolor=border_color, highlightthickness=1)
@@ -353,14 +431,11 @@ class DialogEditorFrame(customtkinter.CTkFrame):
             elif isinstance(widget_preview, customtkinter.CTkBaseClass):
                 try: widget_preview.configure(border_width=border_width, border_color=border_color)
                 except tkinter.TclError: pass
-
-        # Manage resize handle
         if self.resize_handle_widget:
             self.resize_handle_widget.destroy()
             self.resize_handle_widget = None
-
-        if control_entry: # If a control is being selected
-            self._populate_props_pane(control_entry) # Populate props before creating handle (in case of errors)
+        if control_entry:
+            self._populate_props_pane(control_entry)
             selected_widget = self.preview_widgets.get(control_entry)
             if selected_widget and isinstance(selected_widget, customtkinter.CTkBaseClass):
                 handle_size = 8
@@ -371,11 +446,11 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                 self.resize_handle_widget.bind("<Button-1>", self.on_resize_drag_start)
                 self.resize_handle_widget.bind("<B1-Motion>", self.on_resize_drag)
                 self.resize_handle_widget.bind("<ButtonRelease-1>", self.on_resize_drag_release)
-        else: # No control selected (dialog background clicked)
+        else:
             self._populate_props_pane(self.dialog_props_copy)
 
-
     def apply_properties_to_selection(self):
+        # ... (rest of method remains the same)
         target_obj = self.selected_control_entry if self.selected_control_entry else self.dialog_props_copy
         if not target_obj: return; changed = False
         try:
@@ -429,6 +504,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         except Exception as e: messagebox.showerror("Error", f"Could not apply properties: {e}", parent=self)
 
     def on_add_control(self):
+        # ... (rest of method remains the same)
         control_types = {
             "Button (Push)": ("BUTTON", "Button", BS_PUSHBUTTON | WS_VISIBLE | WS_CHILD | WS_TABSTOP, 50, 14),
             "Edit Control": ("EDIT", "", ES_LEFT | WS_BORDER | WS_VISIBLE | WS_CHILD | WS_TABSTOP, 100, 14),
@@ -456,13 +532,12 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         elif choice_str: messagebox.showerror("Invalid Type", f"Control type '{choice_str}' is not recognized.", parent=self)
 
     def on_delete_control(self):
+        # ... (rest of method remains the same)
         if self.selected_control_entry:
             if messagebox.askyesno("Delete Control", f"Delete control '{self.selected_control_entry.text}' ({self.selected_control_entry.get_id_display()})?", parent=self):
-                # Destroy resize handle if it belongs to the control being deleted
                 if self.resize_handle_widget and self.resize_handle_widget.master == self.preview_widgets.get(self.selected_control_entry):
                     self.resize_handle_widget.destroy()
                     self.resize_handle_widget = None
-
                 self.controls_copy.remove(self.selected_control_entry)
                 self.selected_control_entry = None
                 self.render_dialog_preview()
@@ -470,6 +545,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         else: messagebox.showinfo("Delete Control", "No control selected to delete.", parent=self)
 
     def apply_all_changes_to_resource(self):
+        # ... (rest of method remains the same)
         if self.prop_widgets_map : self.apply_properties_to_selection()
         self.dialog_resource.properties = copy.deepcopy(self.dialog_props_copy)
         self.dialog_resource.controls = copy.deepcopy(self.controls_copy)
@@ -478,6 +554,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         messagebox.showinfo("Changes Applied", "All dialog changes applied to in-memory resource. Save file to persist.", parent=self)
 
 if __name__ == '__main__':
+    # ... (rest of __main__ remains the same)
     class DummyApp:
         def __init__(self):
             self.root = customtkinter.CTk(); self.root.title("Dialog Editor Test"); self.root.geometry("1000x700")
