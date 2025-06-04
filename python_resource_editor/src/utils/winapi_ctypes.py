@@ -110,9 +110,9 @@ def MAKEINTRESOURCE(value: int) -> wintypes.LPWSTR:
     return ctypes.cast(wintypes.HANDLE(value), wintypes.LPWSTR)
 
 # --- Kernel32 Functions ---
-BeginUpdateResourcesW = kernel32.BeginUpdateResourcesW
-BeginUpdateResourcesW.restype = wintypes.HANDLE
-BeginUpdateResourcesW.argtypes = [wintypes.LPCWSTR, wintypes.BOOL]
+BeginUpdateResourceW = kernel32.BeginUpdateResourceW
+BeginUpdateResourceW.restype = wintypes.HANDLE
+BeginUpdateResourceW.argtypes = [wintypes.LPCWSTR, wintypes.BOOL]
 
 UpdateResourceW = kernel32.UpdateResourceW
 UpdateResourceW.restype = wintypes.BOOL
