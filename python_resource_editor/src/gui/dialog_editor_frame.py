@@ -1,5 +1,5 @@
 import customtkinter
-import tkinter
+import tkinter # Ensure tkinter is imported for tkinter.END
 from tkinter import simpledialog, messagebox, colorchooser
 from typing import List, Dict, Callable, Optional, Union, Tuple
 import copy
@@ -140,6 +140,54 @@ class DialogEditorFrame(customtkinter.CTkFrame):
             print(f"External native dialog WM_CLOSE received for HWND {hwnd_val}")
             if hwnd: wct.DestroyWindow(hwnd)
             return wct.wintypes.LPARAM(0)
+        elif uMsg == wct.WM_COMMAND:
+            control_hwnd_val_from_lparam = lParam
+            notification_code = (wParam >> 16) & 0xFFFF
+
+            control_entry = self.control_entry_from_hwnd.get(control_hwnd_val_from_lparam)
+
+            if control_entry:
+                is_edit_control = False
+                if isinstance(control_entry.class_name, str) and control_entry.class_name.upper() == "EDIT":
+                    is_edit_control = True
+                elif isinstance(control_entry.class_name, int) and hasattr(wct, 'EDIT_ATOM') and control_entry.class_name == wct.EDIT_ATOM:
+                    is_edit_control = True
+
+                if is_edit_control and notification_code == wct.EN_KILLFOCUS:
+                    print(f"Native EDIT control (HWND: {control_hwnd_val_from_lparam}) sent EN_KILLFOCUS.")
+
+                    control_hwnd_obj = wct.wintypes.HWND(control_hwnd_val_from_lparam)
+                    text_len = wct.GetWindowTextLengthW(control_hwnd_obj)
+
+                    if text_len >= 0:
+                        buffer = ctypes.create_unicode_buffer(text_len + 1)
+                        wct.GetWindowTextW(control_hwnd_obj, buffer, text_len + 1)
+                        new_text = buffer.value
+
+                        if control_entry.text != new_text:
+                            print(f"Updating control ID {control_entry.get_id_display()} text from native edit: '{new_text}'")
+                            control_entry.text = new_text
+
+                            if self.app_callbacks.get('set_dirty_callback'):
+                                self.app_callbacks['set_dirty_callback'](True)
+
+                            if self.selected_control_entry == control_entry:
+                                if 'text' in self.prop_widgets_map:
+                                    try:
+                                        text_widget = self.prop_widgets_map['text']
+                                        if hasattr(text_widget, 'delete') and hasattr(text_widget, 'insert'):
+                                            text_widget.delete(0, tkinter.END)
+                                            text_widget.insert(0, new_text)
+                                        else:
+                                            print("Warning: 'text' widget in prop_widgets_map does not support delete/insert.")
+                                    except Exception as e:
+                                        print(f"Error updating property pane for text: {e}")
+                    return wct.wintypes.LPARAM(0).value
+
+            # For other WM_COMMAND messages or if not handled by the above logic,
+            # pass it to the default window procedure for the main external dialog.
+            # This means this WM_COMMAND was for the main dialog itself, not a control notification we are handling here.
+            return wct.DefWindowProcW(hwnd, uMsg, wParam, lParam)
 
         return wct.DefWindowProcW(hwnd, uMsg, wParam, lParam)
 
@@ -196,7 +244,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                     current_x_pixel = getattr(control_entry, 'pixel_x', control_entry.x)
                     current_y_pixel = getattr(control_entry, 'pixel_y', control_entry.y)
                     wct.SetWindowPos(hwnd, 0, current_x_pixel, current_y_pixel, new_pixel_width, new_pixel_height, wct.SWP_NOMOVE | wct.SWP_NOZORDER | wct.SWP_NOACTIVATE)
-                    if self.selected_control_entry == control_entry: # Assuming selection is handled elsewhere
+                    if self.selected_control_entry == control_entry:
                         if 'width' in self.prop_widgets_map: self.prop_widgets_map['width'].delete(0, tkinter.END); self.prop_widgets_map['width'].insert(0, str(new_pixel_width))
                         if 'height' in self.prop_widgets_map: self.prop_widgets_map['height'].delete(0, tkinter.END); self.prop_widgets_map['height'].insert(0, str(new_pixel_height))
             return 0
@@ -224,7 +272,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                         control_entry.y = wct.MulDiv(final_pixel_y_in_parent, 8, base_unit_y)
                     else: control_entry.x, control_entry.y = final_pixel_x_in_parent, final_pixel_y_in_parent
 
-                    if self.selected_control_entry == control_entry: # Update property pane if this is the selected control
+                    if self.selected_control_entry == control_entry:
                         if 'x' in self.prop_widgets_map: self.prop_widgets_map['x'].delete(0, tkinter.END); self.prop_widgets_map['x'].insert(0, str(control_entry.x))
                         if 'y' in self.prop_widgets_map: self.prop_widgets_map['y'].delete(0, tkinter.END); self.prop_widgets_map['y'].insert(0, str(control_entry.y))
 
@@ -239,7 +287,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                         control_entry.height = wct.MulDiv(final_pixel_height, 8, base_unit_y)
                     else: control_entry.width, control_entry.height = final_pixel_width, final_pixel_height
 
-                    if self.selected_control_entry == control_entry: # Update property pane
+                    if self.selected_control_entry == control_entry:
                         if 'width' in self.prop_widgets_map: self.prop_widgets_map['width'].delete(0, tkinter.END); self.prop_widgets_map['width'].insert(0, str(control_entry.width))
                         if 'height' in self.prop_widgets_map: self.prop_widgets_map['height'].delete(0, tkinter.END); self.prop_widgets_map['height'].insert(0, str(control_entry.height))
 
@@ -248,15 +296,12 @@ class DialogEditorFrame(customtkinter.CTkFrame):
             return 0
 
         elif uMsg == wct.WM_SETCURSOR:
-            if hwnd_val == (lParam & 0xFFFF) and ((lParam >> 16) & 0xFFFF) == 1: # HTCLIENT = 1
+            if hwnd_val == (lParam & 0xFFFF) and ((lParam >> 16) & 0xFFFF) == 1:
                 current_screen_pos = wct.wintypes.POINT()
                 wct.GetCursorPos(ctypes.byref(current_screen_pos))
                 if self._is_in_resize_corner(hwnd, current_screen_pos):
                     wct.SetCursor(wct.LoadCursorW(None, wct.MAKEINTRESOURCE(wct.IDC_SIZENWSE)))
                     return 1
-                # Fallback to default arrow if not resizing and not explicitly moving
-                # (or SIZEALL if we were in active move drag - handled by _native_drag_info check)
-                # Let original_proc handle it for default cursors based on class
 
         return wct.CallWindowProcW(original_proc, hwnd, uMsg, wParam, lParam).value
 
@@ -265,7 +310,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
             print("Attempting to focus existing external native window.")
             wct.ShowWindow(self.native_dlg_hwnd, wct.SW_SHOW)
             wct.user32.SetForegroundWindow(self.native_dlg_hwnd)
-            self._populate_native_dialog_with_controls() # Refresh controls
+            self._populate_native_dialog_with_controls()
             return
 
         h_instance = wct.GetModuleHandleW(None)
@@ -300,7 +345,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         if self.native_dlg_hwnd and self.native_dlg_hwnd.value != 0:
             print(f"Destroying external native window: {self.native_dlg_hwnd.value}")
             wct.DestroyWindow(self.native_dlg_hwnd)
-        # self.native_control_hwnds.clear() is handled by WM_DESTROY of parent
+        # self.native_control_hwnds.clear() should happen in WM_DESTROY of parent via _external_dialog_wnd_proc
 
     def _populate_native_dialog_with_controls(self):
         if not self.native_dlg_hwnd or self.native_dlg_hwnd.value == 0:
@@ -320,6 +365,12 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         h_instance = wct.GetModuleHandleW(None)
 
         for control_entry in self.controls_copy:
+            if not hasattr(control_entry, 'pixel_x'): control_entry.pixel_x = 0
+            if not hasattr(control_entry, 'pixel_y'): control_entry.pixel_y = 0
+            if not hasattr(control_entry, 'pixel_width'): control_entry.pixel_width = 0
+            if not hasattr(control_entry, 'pixel_height'): control_entry.pixel_height = 0
+
+
             native_class_name_str = ""
             if isinstance(control_entry.class_name, int):
                 native_class_name_str = ATOM_TO_CLASSNAME_MAP.get(control_entry.class_name, str(control_entry.class_name))
@@ -365,19 +416,13 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                 self.control_entry_from_hwnd[control_hwnd.value] = control_entry
 
                 original_proc = wct.SetWindowLongPtrW(control_hwnd, wct.GWLP_WNDPROC, self.subclassed_control_wnd_proc_ref)
-                if original_proc == 0 and ctypes.get_last_error() != 0: # Error 0 means success if new proc is same as old
+                if original_proc == 0 and ctypes.get_last_error() != 0:
                     print(f"Error subclassing HWND {control_hwnd.value}: {ctypes.get_last_error()}")
                 else:
-                    if original_proc == self.subclassed_control_wnd_proc_ref: # Already subclassed?
+                    if original_proc == self.subclassed_control_wnd_proc_ref.value:
                         print(f"Note: Control HWND {control_hwnd.value} might have already been subclassed with the same proc.")
-                        # Do not store it again if it's the same as our proc, use the one already stored or handle error
                         if control_hwnd.value not in self.native_control_orig_procs:
-                             # This case is tricky, means SetWindowLongPtrW returned our own proc.
-                             # It might happen if the function is called multiple times.
-                             # For safety, let's try to get the "real" original proc if possible,
-                             # but this might be difficult. Defaulting to DefWindowProc might be an option.
                              print(f"Warning: Subclassing HWND {control_hwnd.value} returned its own new proc. Original proc might be lost.")
-                             # self.native_control_orig_procs[control_hwnd.value] = wct.DefWindowProcW # Risky fallback
                     else:
                         self.native_control_orig_procs[control_hwnd.value] = original_proc
                         print(f"Subclassed control: HWND={control_hwnd.value}, OriginalProc={original_proc}")
@@ -414,11 +459,10 @@ class DialogEditorFrame(customtkinter.CTkFrame):
             print(f"Warning: SetWindowPos failed for control ID {control_entry.get_id_display()}. Error: {ctypes.get_last_error()}")
 
         new_text = str(control_entry.text or "")
-        if not wct.user32.SetWindowTextW(control_hwnd, new_text):
+        if not wct.user32.SetWindowTextW(control_hwnd, new_text): # Explicit call to user32.SetWindowTextW
             print(f"Warning: SetWindowTextW failed for control ID {control_entry.get_id_display()}. Error: {ctypes.get_last_error()}")
 
         print(f"Updated native control visuals for ID {control_entry.get_id_display()}: Pos({px},{py}) Size({pw}x{ph}) Text='{new_text[:20]}'")
-
 
     def render_dialog_preview(self):
         if hasattr(self, 'destroy_win32_preview'): self.destroy_win32_preview()
@@ -608,9 +652,8 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                     if not wct.user32.SetWindowTextW(self.native_dlg_hwnd, new_caption):
                          print(f"Warning: Failed to update native dialog caption. Error: {ctypes.get_last_error()}")
 
-                self.render_dialog_preview() # This re-renders CTk preview, might be redundant if only native is shown
+                self.render_dialog_preview()
 
-                # Re-populate property pane to reflect changes and ensure consistency
                 if self.selected_control_entry and self.selected_control_entry is target_obj:
                     self.display_control_properties(self.selected_control_entry)
                 elif not self.selected_control_entry and isinstance(target_obj, DialogProperties):
@@ -637,14 +680,9 @@ class DialogEditorFrame(customtkinter.CTkFrame):
             if messagebox.askyesno("Delete Control", f"Delete control '{self.selected_control_entry.text}' ({self.selected_control_entry.get_id_display()})?", parent=self):
                 if self.resize_handle_widget and self.resize_handle_widget.master == self.preview_widgets.get(self.selected_control_entry): self.resize_handle_widget.destroy(); self.resize_handle_widget = None
 
-                # If native control exists, it will be destroyed with parent or if _populate is called again
-                # Remove from our tracking dicts
                 native_hwnd_to_remove = self.native_control_hwnds.pop(self.selected_control_entry, None)
                 if native_hwnd_to_remove and native_hwnd_to_remove.value in self.native_control_orig_procs:
-                    # Attempt to unsubclass before it's destroyed by _populate or parent destroy
-                    # This might be tricky if _populate is called immediately after by render_dialog_preview
-                    # It's safer to let parent destruction handle child destruction and unsubclass in parent's WM_DESTROY
-                    pass # For now, rely on parent WM_DESTROY or _populate's clearing
+                    pass
                 if native_hwnd_to_remove and native_hwnd_to_remove.value in self.control_entry_from_hwnd:
                     del self.control_entry_from_hwnd[native_hwnd_to_remove.value]
 
@@ -679,3 +717,5 @@ if __name__ == '__main__':
         def run(self): self.root.mainloop()
     app = DummyApp(); app.run()
     pass
+
+[end of python_resource_editor/src/gui/dialog_editor_frame.py]

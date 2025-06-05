@@ -17,18 +17,22 @@ WM_INITDIALOG = 0x0110
 WM_COMMAND = 0x0111
 WM_CLOSE = 0x0010
 WM_DESTROY = 0x0002
-WM_LBUTTONDOWN = 0x0201 # Added
-WM_LBUTTONUP = 0x0202   # Added
-WM_MOUSEMOVE = 0x0200   # Added
-WM_SETCURSOR = 0x0020   # Added
-WM_CAPTURECHANGED = 0x0215 # Added
+WM_LBUTTONDOWN = 0x0201
+WM_LBUTTONUP = 0x0202
+WM_MOUSEMOVE = 0x0200
+WM_SETCURSOR = 0x0020
+WM_CAPTURECHANGED = 0x0215
+
+# Edit Control Notification Codes (for WM_COMMAND)
+EN_CHANGE = 0x0300      # Added
+EN_KILLFOCUS = 0x0200   # Added
 
 
 # GetWindowLong/SetWindowLong Indeces
 GWL_STYLE = -16
 GWL_EXSTYLE = -20
-GWLP_WNDPROC = -4      # Added
-GWLP_USERDATA = -21    # Added
+GWLP_WNDPROC = -4
+GWLP_USERDATA = -21
 
 
 # Window Styles
@@ -71,8 +75,8 @@ IMAGE_CURSOR = 2
 
 # Cursor IDs (for LoadCursorW)
 IDC_ARROW = 32512
-IDC_SIZEALL = 32646 # Added
-IDC_SIZENWSE = 32648 # Diagonal resize cursor (bottom-right / top-left)
+IDC_SIZEALL = 32646
+IDC_SIZENWSE = 32648
 
 # Icon IDs (for LoadIconW)
 IDI_APPLICATION = 32512
@@ -83,16 +87,19 @@ COLOR_WINDOW = 5
 # Error Codes
 ERROR_CLASS_ALREADY_EXISTS = 1410
 
+# Control Class Atoms (for CreateWindowEx, etc.)
+BUTTON_ATOM = 0x0080    # Added
+EDIT_ATOM = 0x0081      # Added
+STATIC_ATOM = 0x0082    # Added
+LISTBOX_ATOM = 0x0083   # Added
+SCROLLBAR_ATOM = 0x0084 # Added
+COMBOBOX_ATOM = 0x0085  # Added
+
 
 # --- Structures ---
 class RECT(ctypes.Structure):
     _fields_ = [("left", wintypes.LONG), ("top", wintypes.LONG),
                 ("right", wintypes.LONG), ("bottom", wintypes.LONG)]
-
-# wintypes.POINT should be available, but if not:
-# class POINT(ctypes.Structure):
-#     _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
-# For now, assume wintypes.POINT is available.
 
 class ICONINFO(ctypes.Structure):
     _fields_ = [("fIcon", wintypes.BOOL), ("xHotspot", wintypes.DWORD),
@@ -196,28 +203,24 @@ SetWindowLongW = user32.SetWindowLongW
 SetWindowLongW.restype = wintypes.LONG
 SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.LONG]
 
-# SetWindowLongPtrW / GetWindowLongPtrW for subclassing
 if ctypes.sizeof(ctypes.c_void_p) == ctypes.sizeof(ctypes.c_longlong): # 64-bit
     SetWindowLongPtrW = user32.SetWindowLongPtrW
     SetWindowLongPtrW.restype = wintypes.LPARAM
     SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, WNDPROC]
-
     GetWindowLongPtrW = user32.GetWindowLongPtrW
     GetWindowLongPtrW.restype = wintypes.LPARAM
     GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
 else: # 32-bit
-    SetWindowLongPtrW = user32.SetWindowLongW # Alias to SetWindowLongW
+    SetWindowLongPtrW = user32.SetWindowLongW
     SetWindowLongPtrW.restype = wintypes.LONG
     SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, WNDPROC]
-
-    GetWindowLongPtrW = user32.GetWindowLongW # Alias to GetWindowLongW
+    GetWindowLongPtrW = user32.GetWindowLongW
     GetWindowLongPtrW.restype = wintypes.LONG
     GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
 
-CallWindowProcW = user32.CallWindowProcW # Added
+CallWindowProcW = user32.CallWindowProcW
 CallWindowProcW.restype = wintypes.LPARAM
 CallWindowProcW.argtypes = [WNDPROC, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-
 
 ShowWindow = user32.ShowWindow
 ShowWindow.restype = wintypes.BOOL
@@ -282,25 +285,33 @@ MapDialogRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
 GetDialogBaseUnits = user32.GetDialogBaseUnits
 GetDialogBaseUnits.restype = wintypes.LONG
 
-SetCapture = user32.SetCapture # Added
+SetCapture = user32.SetCapture
 SetCapture.restype = wintypes.HWND
 SetCapture.argtypes = [wintypes.HWND]
 
-ReleaseCapture = user32.ReleaseCapture # Added
+ReleaseCapture = user32.ReleaseCapture
 ReleaseCapture.restype = wintypes.BOOL
 # No arguments for ReleaseCapture
 
-GetCursorPos = user32.GetCursorPos # Added
+GetCursorPos = user32.GetCursorPos
 GetCursorPos.restype = wintypes.BOOL
 GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
 
-ScreenToClient = user32.ScreenToClient # Added
+ScreenToClient = user32.ScreenToClient
 ScreenToClient.restype = wintypes.BOOL
 ScreenToClient.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
 
 GetClientRect = user32.GetClientRect
 GetClientRect.restype = wintypes.BOOL
 GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+
+GetWindowTextLengthW = user32.GetWindowTextLengthW # Added
+GetWindowTextLengthW.restype = ctypes.c_int
+GetWindowTextLengthW.argtypes = [wintypes.HWND]
+
+GetWindowTextW = user32.GetWindowTextW # Added
+GetWindowTextW.restype = ctypes.c_int
+GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 
 
 # --- GDI32 Functions ---
