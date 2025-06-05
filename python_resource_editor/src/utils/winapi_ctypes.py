@@ -72,6 +72,7 @@ IMAGE_CURSOR = 2
 # Cursor IDs (for LoadCursorW)
 IDC_ARROW = 32512
 IDC_SIZEALL = 32646 # Added
+IDC_SIZENWSE = 32648 # Diagonal resize cursor (bottom-right / top-left)
 
 # Icon IDs (for LoadIconW)
 IDI_APPLICATION = 32512
@@ -296,6 +297,10 @@ GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
 ScreenToClient = user32.ScreenToClient # Added
 ScreenToClient.restype = wintypes.BOOL
 ScreenToClient.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+
+GetClientRect = user32.GetClientRect
+GetClientRect.restype = wintypes.BOOL
+GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
 
 
 # --- GDI32 Functions ---
