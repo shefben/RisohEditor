@@ -19,7 +19,7 @@ from ..core.dialog_parser_util import (
     BS_GROUPBOX, SBS_HORZ, LVS_REPORT, TVS_HASLINES, TVS_LINESATROOT, TVS_HASBUTTONS
 )
 from ..core.resource_types import DialogResource
-import os # For os.path.splitext in is_image_type definition if used within this file
+import os
 
 
 class DialogEditorFrame(customtkinter.CTkFrame):
@@ -42,14 +42,12 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         self.resize_handle_widget: Optional[customtkinter.CTkFrame] = None
         self._resize_drag_data = {"widget": None, "control_entry": None, "start_x_event_root": 0, "start_y_event_root": 0, "start_width": 0, "start_height": 0}
 
-        # For external native window
         self.native_dlg_hwnd: Optional[wct.wintypes.HWND] = None
         self.native_wnd_proc_ref = wct.WNDPROC(self._external_dialog_wnd_proc)
         self.external_window_class_name = f"PyNativeDialogHost_{id(self)}"
         self.native_control_hwnds: Dict[DialogControlEntry, wct.wintypes.HWND] = {}
 
-        # For subclassing native controls
-        self.native_control_orig_procs: Dict[int, wct.WNDPROC] = {} # HWND value as key
+        self.native_control_orig_procs: Dict[int, wct.WNDPROC] = {}
         self.subclassed_control_wnd_proc_ref = wct.WNDPROC(self._subclassed_native_control_wnd_proc)
         self._native_drag_info = {}
         self.control_entry_from_hwnd: Dict[int, DialogControlEntry] = {}
@@ -109,16 +107,15 @@ class DialogEditorFrame(customtkinter.CTkFrame):
         if uMsg == wct.WM_INITDIALOG: return True
         return False
 
-    def _external_dialog_wnd_proc(self, hwnd: wct.wintypes.HWND, uMsg: wct.wintypes.UINT, wParam: wct.wintypes.WPARAM, lParam: wct.wintypes.LPARAM) -> wct.wintypes.LPARAM: # Return type matches WNDPROC
+    def _external_dialog_wnd_proc(self, hwnd: wct.wintypes.HWND, uMsg: wct.wintypes.UINT, wParam: wct.wintypes.WPARAM, lParam: wct.wintypes.LPARAM) -> wct.wintypes.LPARAM:
         hwnd_val = hwnd.value if hwnd else 0
         if uMsg == wct.WM_DESTROY:
             print(f"External native dialog WM_DESTROY received for HWND {hwnd_val}")
-            if self.native_dlg_hwnd and self.native_dlg_hwnd.value == hwnd_val:
-                # Before destroying, unsubclass all child controls
+            if self.native_dlg_hwnd and hasattr(hwnd, 'value') and self.native_dlg_hwnd.value == hwnd_val:
                 for control_hwnd_int, original_proc_ptr in list(self.native_control_orig_procs.items()):
                     control_hwnd_to_unsub = wct.wintypes.HWND(control_hwnd_int)
                     current_proc = wct.GetWindowLongPtrW(control_hwnd_to_unsub, wct.GWLP_WNDPROC)
-                    if current_proc == self.subclassed_control_wnd_proc_ref: # Make sure it's still our proc
+                    if current_proc == self.subclassed_control_wnd_proc_ref:
                         wct.SetWindowLongPtrW(control_hwnd_to_unsub, wct.GWLP_WNDPROC, original_proc_ptr)
                 self.native_control_orig_procs.clear()
                 self.control_entry_from_hwnd.clear()
@@ -131,30 +128,20 @@ class DialogEditorFrame(customtkinter.CTkFrame):
 
         return wct.DefWindowProcW(hwnd, uMsg, wParam, lParam)
 
-    def _subclassed_native_control_wnd_proc(self, hwnd_val_int: int, uMsg: int, wParam: int, lParam: int) -> int: # ctypes WNDPROC returns int
+    def _subclassed_native_control_wnd_proc(self, hwnd_val_int: int, uMsg: int, wParam: int, lParam: int) -> int:
         hwnd = wct.wintypes.HWND(hwnd_val_int)
         original_proc = self.native_control_orig_procs.get(hwnd_val_int)
         control_entry = self.control_entry_from_hwnd.get(hwnd_val_int)
 
-        if not original_proc : # or not control_entry (control_entry might not be needed for all messages)
-            # print(f"Warning: No original_proc for hwnd {hwnd_val_int} in subclassed_proc. Msg: {uMsg:04X}")
+        if not original_proc :
             return wct.DefWindowProcW(hwnd, uMsg, wParam, lParam).value
 
         if uMsg == wct.WM_LBUTTONDOWN:
             print(f"Native LBUTTONDOWN on HWND: {hwnd_val_int}")
             if self.app_callbacks.get("set_focus_callback"): self.app_callbacks["set_focus_callback"]()
-
-            if control_entry: # If we have the control entry, update property pane
-                # This is a simplification; ideally, selection should be managed more centrally
-                # For now, this shows the props of the control clicked in the native window
-                # self.selected_control_entry = control_entry # This might conflict with CTk preview selection
-                # self._populate_props_pane(control_entry)
-                print(f"Selected native control: ID {control_entry.get_id_display()}")
-
-
+            if control_entry: print(f"Selected native control: ID {control_entry.get_id_display()}")
             current_pos = wct.wintypes.POINT()
             wct.GetCursorPos(ctypes.byref(current_pos))
-
             self._native_drag_info = {
                 "hwnd": hwnd_val_int, "control_entry": control_entry, "dragging": True,
                 "start_mouse_x_screen": current_pos.x, "start_mouse_y_screen": current_pos.y,
@@ -162,56 +149,72 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                 "start_control_y_pixel": getattr(control_entry, 'pixel_y', 0)
             }
             wct.SetCapture(hwnd)
-            return 0 # Return 0 for handled LBUTTONDOWN
+            return 0
 
         elif uMsg == wct.WM_MOUSEMOVE:
             if self._native_drag_info.get("dragging") and self._native_drag_info.get("hwnd") == hwnd_val_int:
                 current_pos = wct.wintypes.POINT()
                 wct.GetCursorPos(ctypes.byref(current_pos))
-
                 delta_x = current_pos.x - self._native_drag_info["start_mouse_x_screen"]
                 delta_y = current_pos.y - self._native_drag_info["start_mouse_y_screen"]
-
                 new_x_pixel = self._native_drag_info["start_control_x_pixel"] + delta_x
                 new_y_pixel = self._native_drag_info["start_control_y_pixel"] + delta_y
-
-                wct.SetWindowPos(hwnd, 0, new_x_pixel, new_y_pixel, 0, 0,
-                                 wct.SWP_NOSIZE | wct.SWP_NOZORDER | wct.SWP_NOACTIVATE)
+                wct.SetWindowPos(hwnd, 0, new_x_pixel, new_y_pixel, 0, 0, wct.SWP_NOSIZE | wct.SWP_NOZORDER | wct.SWP_NOACTIVATE)
             return 0
 
         elif uMsg == wct.WM_LBUTTONUP:
             if self._native_drag_info.get("dragging") and self._native_drag_info.get("hwnd") == hwnd_val_int:
                 wct.ReleaseCapture()
+                final_rect_screen = wct.RECT()
+                wct.user32.GetWindowRect(hwnd, ctypes.byref(final_rect_screen))
+                parent_client_tl = wct.wintypes.POINT(final_rect_screen.left, final_rect_screen.top)
+                wct.ScreenToClient(self.native_dlg_hwnd, ctypes.byref(parent_client_tl))
+                final_pixel_x_in_parent = parent_client_tl.x
+                final_pixel_y_in_parent = parent_client_tl.y
 
-                final_rect = wct.RECT(); wct.user32.GetWindowRect(hwnd, ctypes.byref(final_rect))
-                parent_top_left = wct.wintypes.POINT(final_rect.left, final_rect.top)
-                wct.ScreenToClient(self.native_dlg_hwnd, ctypes.byref(parent_top_left))
-                final_pixel_x, final_pixel_y = parent_top_left.x, parent_top_left.y
+                control_entry.pixel_x = final_pixel_x_in_parent
+                control_entry.pixel_y = final_pixel_y_in_parent
 
-                print(f"Native control HWND {hwnd_val_int} moved. Final pixel (parent client): {final_pixel_x}, {final_pixel_y}")
-                print("TODO: Convert these final pixel coords back to DLUs and update control_entry.x, .y")
+                base_units = wct.GetDialogBaseUnits()
+                base_unit_x = base_units & 0xFFFF
+                base_unit_y = (base_units >> 16) & 0xFFFF
 
-                if control_entry:
-                    # For now, update with pixel values, DLU conversion TODO
-                    control_entry.x = final_pixel_x
-                    control_entry.y = final_pixel_y
-                    control_entry.pixel_x = final_pixel_x
-                    control_entry.pixel_y = final_pixel_y
-                    if self.app_callbacks.get('set_dirty_callback'): self.app_callbacks['set_dirty_callback'](True)
-                    # if self.selected_control_entry == control_entry: self._populate_props_pane(control_entry) # Refresh props
+                final_dlu_x = control_entry.x
+                final_dlu_y = control_entry.y
+
+                if base_unit_x != 0 and base_unit_y != 0:
+                    final_dlu_x = wct.MulDiv(final_pixel_x_in_parent, 4, base_unit_x)
+                    final_dlu_y = wct.MulDiv(final_pixel_y_in_parent, 8, base_unit_y)
+                    print(f"Native control HWND {hwnd_val_int} moved. Pixel (parent client): {final_pixel_x_in_parent}, {final_pixel_y_in_parent} -> DLU: {final_dlu_x}, {final_dlu_y}")
+                else:
+                    print(f"Warning: Could not get valid dialog base units for DLU conversion. Storing pixel values in DLU fields for HWND {hwnd_val_int}.")
+                    final_dlu_x = final_pixel_x_in_parent
+                    final_dlu_y = final_pixel_y_in_parent
+
+                control_entry.x = final_dlu_x
+                control_entry.y = final_dlu_y
+
+                if self.selected_control_entry == control_entry:
+                    if 'x' in self.prop_widgets_map:
+                        self.prop_widgets_map['x'].delete(0, tkinter.END)
+                        self.prop_widgets_map['x'].insert(0, str(final_dlu_x))
+                    if 'y' in self.prop_widgets_map:
+                        self.prop_widgets_map['y'].delete(0, tkinter.END)
+                        self.prop_widgets_map['y'].insert(0, str(final_dlu_y))
+
+                if self.app_callbacks.get('set_dirty_callback'):
+                    self.app_callbacks['set_dirty_callback'](True)
 
                 self._native_drag_info = {}
             return 0
 
         elif uMsg == wct.WM_SETCURSOR:
              wct.SetCursor(wct.LoadCursorW(None, wct.MAKEINTRESOURCE(wct.IDC_SIZEALL)))
-             return 1 # True - Handled
+             return 1
 
         return wct.CallWindowProcW(original_proc, hwnd, uMsg, wParam, lParam).value
 
-
     def _create_external_native_window(self):
-        # ... (Method largely the same, but ensure _populate_native_dialog_with_controls is called)
         if self.native_dlg_hwnd and self.native_dlg_hwnd.value != 0 :
             print("Attempting to focus existing external native window.")
             wct.ShowWindow(self.native_dlg_hwnd, wct.SW_SHOW)
@@ -234,7 +237,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                 print(f"Failed to register window class '{self.external_window_class_name}': Error {err}"); return
 
         dialog_title = str(self.dialog_props_copy.caption or "Native Dialog Editor")
-        main_w, main_h = 500, 400 # Default size for now
+        main_w, main_h = 500, 400
 
         self.native_dlg_hwnd = wct.CreateWindowExW(
             0, self.external_window_class_name, dialog_title, wct.WS_OVERLAPPEDWINDOW | wct.WS_VISIBLE,
@@ -249,43 +252,34 @@ class DialogEditorFrame(customtkinter.CTkFrame):
     def destroy_external_native_window(self):
         if self.native_dlg_hwnd and self.native_dlg_hwnd.value != 0:
             print(f"Destroying external native window: {self.native_dlg_hwnd.value}")
-            # Unsubclass controls before destroying parent window
-            for control_hwnd_int, original_proc_ptr in list(self.native_control_orig_procs.items()):
-                control_hwnd_to_unsub = wct.wintypes.HWND(control_hwnd_int)
+            for control_hwnd_val_int, original_proc_ptr in list(self.native_control_orig_procs.items()):
+                control_hwnd_to_unsub = wct.wintypes.HWND(control_hwnd_val_int)
                 current_proc = wct.GetWindowLongPtrW(control_hwnd_to_unsub, wct.GWLP_WNDPROC)
                 if current_proc == self.subclassed_control_wnd_proc_ref:
                     wct.SetWindowLongPtrW(control_hwnd_to_unsub, wct.GWLP_WNDPROC, original_proc_ptr)
             self.native_control_orig_procs.clear()
             self.control_entry_from_hwnd.clear()
-
             wct.DestroyWindow(self.native_dlg_hwnd)
-            # self.native_dlg_hwnd will be set to None in WM_DESTROY
         self.native_control_hwnds.clear()
-
 
     def _populate_native_dialog_with_controls(self):
         if not self.native_dlg_hwnd or self.native_dlg_hwnd.value == 0:
             print("Cannot populate controls: Native dialog host window does not exist.")
             return
 
-        # Clear previous native controls and their subclassing info
-        for control_hwnd_val_int in list(self.native_control_orig_procs.keys()): # Iterate over HWND values
+        for control_hwnd_val_int in list(self.native_control_orig_procs.keys()):
             control_hwnd_to_unsub = wct.wintypes.HWND(control_hwnd_val_int)
             original_proc_ptr = self.native_control_orig_procs[control_hwnd_val_int]
             current_proc = wct.GetWindowLongPtrW(control_hwnd_to_unsub, wct.GWLP_WNDPROC)
-            if current_proc == self.subclassed_control_wnd_proc_ref: # Only unsubclass if it's ours
+            if current_proc == self.subclassed_control_wnd_proc_ref:
                  wct.SetWindowLongPtrW(control_hwnd_to_unsub, wct.GWLP_WNDPROC, original_proc_ptr)
         self.native_control_orig_procs.clear()
         self.control_entry_from_hwnd.clear()
-        # Child HWNDs will be destroyed when native_dlg_hwnd is destroyed.
-        # We just need to clear our Python-side tracking dict.
         self.native_control_hwnds.clear()
-
 
         h_instance = wct.GetModuleHandleW(None)
 
         for control_entry in self.controls_copy:
-            # Store pixel coords on control_entry, assuming they might not exist
             if not hasattr(control_entry, 'pixel_x'): control_entry.pixel_x = 0
             if not hasattr(control_entry, 'pixel_y'): control_entry.pixel_y = 0
 
@@ -323,7 +317,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                     if pixel_height < 0: pixel_height = 0
             else: print("Warning: Parent native_dlg_hwnd is invalid for MapDialogRect. Using raw DLU values.")
 
-            control_entry.pixel_x = pixel_x # Store initial pixel coords
+            control_entry.pixel_x = pixel_x
             control_entry.pixel_y = pixel_y
 
             control_hwnd = wct.CreateWindowExW(
@@ -333,7 +327,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
 
             if control_hwnd and control_hwnd.value != 0:
                 self.native_control_hwnds[control_entry] = control_hwnd
-                self.control_entry_from_hwnd[control_hwnd.value] = control_entry # Map HWND value to entry
+                self.control_entry_from_hwnd[control_hwnd.value] = control_entry
 
                 original_proc = wct.SetWindowLongPtrW(control_hwnd, wct.GWLP_WNDPROC, self.subclassed_control_wnd_proc_ref)
                 if original_proc == 0:
@@ -348,7 +342,6 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                 print(f"Failed to create native control: Class='{native_class_name_str}', Text='{window_text[:20]}', ID={control_id_int}. Error: {err}")
 
     def render_dialog_preview(self):
-        # ... (remains the same CTk rendering logic) ...
         if hasattr(self, 'destroy_win32_preview'): self.destroy_win32_preview()
         for widget in self.hwnd_host_frame.winfo_children(): widget.destroy()
         self.preview_widgets.clear()
@@ -586,3 +579,5 @@ if __name__ == '__main__':
         def run(self): self.root.mainloop()
     app = DummyApp(); app.run()
     pass
+
+[end of python_resource_editor/src/gui/dialog_editor_frame.py]

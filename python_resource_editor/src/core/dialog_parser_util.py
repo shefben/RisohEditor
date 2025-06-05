@@ -249,14 +249,17 @@ class DialogControlEntry:
                  x: int, y: int, width: int, height: int,
                  style: int = 0, ex_style: int = 0, help_id: int = 0,
                  symbolic_id_name: Optional[str] = None,
-                 creation_data: Optional[bytes] = None): # Added creation_data
+                 creation_data: Optional[bytes] = None,
+                 pixel_x: int = 0, pixel_y: int = 0): # Added pixel_x, pixel_y
         self.class_name: Union[str, int] = class_name
         self.text: str = text
         self.id_val: Union[int, str] = id_val
         self.symbolic_id_name: Optional[str] = symbolic_id_name
         self.x: int = x; self.y: int = y; self.width: int = width; self.height: int = height
         self.style: int = style; self.ex_style: int = ex_style; self.help_id: int = help_id
-        self.creation_data: Optional[bytes] = creation_data # Store it
+        self.creation_data: Optional[bytes] = creation_data
+        self.pixel_x: int = pixel_x # Store it
+        self.pixel_y: int = pixel_y # Store it
 
     def get_id_display(self) -> str:
         return str(self.symbolic_id_name or self.id_val or "0")

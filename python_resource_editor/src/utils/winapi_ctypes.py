@@ -152,6 +152,10 @@ GetModuleHandleW = kernel32.GetModuleHandleW
 GetModuleHandleW.restype = wintypes.HMODULE
 GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 
+MulDiv = kernel32.MulDiv
+MulDiv.restype = ctypes.c_int
+MulDiv.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+
 # --- User32 Functions ---
 RegisterClassExW = user32.RegisterClassExW
 RegisterClassExW.restype = wintypes.ATOM
