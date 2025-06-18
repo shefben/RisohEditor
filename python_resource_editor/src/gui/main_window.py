@@ -18,6 +18,7 @@ from ..core.resource_base import Resource, ResourceIdentifier, FileResource, Tex
 from ..core.resource_types import StringTableResource, RCDataResource, MenuResource, DialogResource, VersionInfoResource, AcceleratorResource, get_resource_class # RCDataResource and get_resource_class are imported
 from ..utils.external_tools import run_windres_compile, WindresError, get_tool_path # Import get_tool_path
 from ..utils import image_utils
+from ..utils.image_utils import open_raw_icon_or_cursor
 from ..core.resource_base import (
     RT_CURSOR, RT_BITMAP, RT_ICON, RT_MENU, RT_DIALOG, RT_STRING, RT_FONTDIR,
     RT_FONT, RT_ACCELERATOR, RT_RCDATA, RT_MESSAGETABLE, RT_GROUP_CURSOR,
@@ -463,13 +464,14 @@ class App(customtkinter.CTk):
                                     actual_image_to_display = r_search
                                     if r_search.identifier.language_id == res_obj.identifier.language_id: # Exact lang match is best
                                         break
-
                         if actual_image_to_display and actual_image_to_display.data:
-                            try:
                                 img_data_member = io.BytesIO(actual_image_to_display.data)
-                                img = Image.open(img_data_member)
-
-                                # Apply ICO/CUR frame selection logic for the member image
+                                try:
+                                    img = Image.open(img_data_member)
+                                except UnidentifiedImageError:
+                                    img = open_raw_icon_or_cursor(actual_image_to_display.data, expected_member_type == RT_CURSOR)
+                                    if not img:
+                                        raise
                                 is_member_format_ico_or_cur = (getattr(img, "format", "").upper() in ["ICO", "CUR"])
 
                                 if is_member_format_ico_or_cur and getattr(img, "n_frames", 1) > 1:
@@ -533,6 +535,39 @@ class App(customtkinter.CTk):
                                 res_obj.load_data(base_dir=base_dir)
                             except Exception as load_err:
                                 raise UnidentifiedImageError(f"Could not load image file {res_obj.filepath}: {load_err}")
+                        img_data = io.BytesIO(res_obj.data)
+                    elif res_obj.data:
+                        img_data = io.BytesIO(res_obj.data)
+
+                    if img_data:
+                        try:
+                            img = Image.open(img_data)
+                        except UnidentifiedImageError:
+                            img = open_raw_icon_or_cursor(res_obj.data, res_obj.identifier.type_id == RT_CURSOR)
+                            if not img:
+                                raise
+
+                        # ????????????????????????????
+                        # Replace old ICO logic with combined RAW?RT_ICON / ICO?file check
+                        is_raw_icon = (res_obj.identifier.type_id == RT_ICON)
+                        is_ico_file = (getattr(img, "format", "").upper() == "ICO")
+                        if is_raw_icon or is_ico_file:
+                            # If it?s a true .ico container with multiple frames, pick 32×32 or the largest
+                            if is_ico_file and getattr(img, "n_frames", 1) > 1:
+                                target = (32, 32)
+                                best = None
+                                for i in range(img.n_frames):
+                                    frm = img.getimage(i)
+                                    if frm.size == target:
+                                        best = frm
+                                        break
+                                    if not best or (frm.width * frm.height) > (best.width * best.height):
+                                        best = frm
+                                img = best
+                            # Ensure a displayable mode (some RT_ICON bitmaps come in BMP palette modes)
+                            if img.mode not in ("RGB", "RGBA"):
+                                img = img.convert("RGBA")
+                        # ????????????????????????????
 
                     # Replaced icon handling
                     if res_obj.data:

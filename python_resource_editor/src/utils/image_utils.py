@@ -1,6 +1,7 @@
 from PIL import Image, UnidentifiedImageError, ImageSequence
 import io
 import os
+import struct
 
 def save_resource_data_as_image(data: bytes, filepath: str, resource_type_id: int, rt_map: dict) -> bool:
     """
@@ -97,6 +98,31 @@ def save_dib_as_bmp(dib_data: bytes, width: int, height: int, bpp: int, filepath
     except Exception as e:
         print(f"Error converting DIB to BMP: {e}")
         return False
+
+
+def open_raw_icon_or_cursor(data: bytes, is_cursor: bool = False):
+    """Return a PIL Image from raw RT_ICON or RT_CURSOR resource data."""
+    try:
+        if len(data) < 40:
+            return None
+        header = struct.unpack('<IIIHH', data[:16])
+        width = header[1]
+        height = header[2] // 2 if not is_cursor else header[2] // 2
+        bitcount = header[4]
+
+        icon_dir = struct.pack('<HHH', 0, 2 if is_cursor else 1, 1)
+        entry = struct.pack('<BBBBHHII',
+                            width if width < 256 else 0,
+                            height if height < 256 else 0,
+                            0, 0,
+                            1, bitcount,
+                            len(data),
+                            6 + 16)
+        ico_data = icon_dir + entry + data
+        return Image.open(io.BytesIO(ico_data))
+    except Exception as e:
+        print(f"Error converting raw icon/cursor: {e}")
+        return None
 
 
 if __name__ == "__main__":
