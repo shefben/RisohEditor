@@ -569,22 +569,29 @@ class App(customtkinter.CTk):
                                 img = img.convert("RGBA")
                         # ????????????????????????????
 
+                    # Replaced icon handling
+                    if res_obj.data:
+                        data_bytes = res_obj.data
+                        if len(data_bytes) >= 4 and data_bytes[:4] == b"\x00\x00\x01\x00":
+                            img = Image.open(io.BytesIO(data_bytes))
+                        elif res_obj.identifier.type_id == RT_ICON:
+                            img = decode_icon_resource(data_bytes)
+                        elif res_obj.identifier.type_id == RT_CURSOR:
+                            img = decode_cursor_resource(data_bytes)
+                        else:
+                            img = Image.open(io.BytesIO(data_bytes))
+                        if img.mode not in ('RGB', 'RGBA'):
+                            img = img.convert('RGBA')
                         max_dim = 256
                         if img.width > max_dim or img.height > max_dim:
                             img.thumbnail((max_dim, max_dim))
-
-                        ctk_image = customtkinter.CTkImage(
-                            light_image=img, dark_image=img,
-                            size=(img.width, img.height)
-                        )
-                        image_label = customtkinter.CTkLabel(
-                            self.editor_frame, image=ctk_image, text=""
-                        )
-                        image_label.pack(padx=10, pady=10, expand=True, anchor="center")
+                        ctk_image = customtkinter.CTkImage(light_image=img, dark_image=img, size=(img.width, img.height))
+                        image_label = customtkinter.CTkLabel(self.editor_frame, image=ctk_image, text='')
+                        image_label.pack(padx=10, pady=10, expand=True, anchor='center')
                         image_label.image = ctk_image
-                        info_text_parts.append(f"Image Size: {img.width}x{img.height}")
+                        info_text_parts.append(f'Image Size: {img.width}x{img.height}')
                     else:
-                        raise UnidentifiedImageError("No image data available")
+                        raise UnidentifiedImageError('No image data available')
 
                 except (UnidentifiedImageError, IOError, EOFError, TypeError, ValueError) as img_err:
                     info_text_parts.append(f"Image Preview Error: {img_err}")
