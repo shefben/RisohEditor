@@ -533,51 +533,30 @@ class App(customtkinter.CTk):
                                 res_obj.load_data(base_dir=base_dir)
                             except Exception as load_err:
                                 raise UnidentifiedImageError(f"Could not load image file {res_obj.filepath}: {load_err}")
-                        img_data = io.BytesIO(res_obj.data)
-                    elif res_obj.data:
-                        img_data = io.BytesIO(res_obj.data)
 
-                    if img_data:
-                        img = Image.open(img_data)
-
-                        # ????????????????????????????
-                        # Replace old ICO logic with combined RAW?RT_ICON / ICO?file check
-                        is_raw_icon = (res_obj.identifier.type_id == RT_ICON)
-                        is_ico_file = (getattr(img, "format", "").upper() == "ICO")
-                        if is_raw_icon or is_ico_file:
-                            # If it?s a true .ico container with multiple frames, pick 32×32 or the largest
-                            if is_ico_file and getattr(img, "n_frames", 1) > 1:
-                                target = (32, 32)
-                                best = None
-                                for i in range(img.n_frames):
-                                    frm = img.getimage(i)
-                                    if frm.size == target:
-                                        best = frm
-                                        break
-                                    if not best or (frm.width * frm.height) > (best.width * best.height):
-                                        best = frm
-                                img = best
-                            # Ensure a displayable mode (some RT_ICON bitmaps come in BMP palette modes)
-                            if img.mode not in ("RGB", "RGBA"):
-                                img = img.convert("RGBA")
-                        # ????????????????????????????
-
+                    # Replaced icon handling
+                    if res_obj.data:
+                        data_bytes = res_obj.data
+                        if len(data_bytes) >= 4 and data_bytes[:4] == b"\x00\x00\x01\x00":
+                            img = Image.open(io.BytesIO(data_bytes))
+                        elif res_obj.identifier.type_id == RT_ICON:
+                            img = decode_icon_resource(data_bytes)
+                        elif res_obj.identifier.type_id == RT_CURSOR:
+                            img = decode_cursor_resource(data_bytes)
+                        else:
+                            img = Image.open(io.BytesIO(data_bytes))
+                        if img.mode not in ('RGB', 'RGBA'):
+                            img = img.convert('RGBA')
                         max_dim = 256
                         if img.width > max_dim or img.height > max_dim:
                             img.thumbnail((max_dim, max_dim))
-
-                        ctk_image = customtkinter.CTkImage(
-                            light_image=img, dark_image=img,
-                            size=(img.width, img.height)
-                        )
-                        image_label = customtkinter.CTkLabel(
-                            self.editor_frame, image=ctk_image, text=""
-                        )
-                        image_label.pack(padx=10, pady=10, expand=True, anchor="center")
+                        ctk_image = customtkinter.CTkImage(light_image=img, dark_image=img, size=(img.width, img.height))
+                        image_label = customtkinter.CTkLabel(self.editor_frame, image=ctk_image, text='')
+                        image_label.pack(padx=10, pady=10, expand=True, anchor='center')
                         image_label.image = ctk_image
-                        info_text_parts.append(f"Image Size: {img.width}x{img.height}")
+                        info_text_parts.append(f'Image Size: {img.width}x{img.height}')
                     else:
-                        raise UnidentifiedImageError("No image data available")
+                        raise UnidentifiedImageError('No image data available')
 
                 except (UnidentifiedImageError, IOError, EOFError, TypeError, ValueError) as img_err:
                     info_text_parts.append(f"Image Preview Error: {img_err}")

@@ -57,6 +57,7 @@ class DialogEditorFrame(customtkinter.CTkFrame):
 
         customtkinter.CTkButton(action_button_frame, text="Add Control", command=self.on_add_control).grid(row=0, column=0, padx=5)
         customtkinter.CTkButton(action_button_frame, text="Delete Control", command=self.on_delete_control).grid(row=0, column=1, padx=5)
+        customtkinter.CTkButton(action_button_frame, text="Win32 Preview", command=self.open_win32_preview).grid(row=0, column=2, padx=5)
         # Apply Properties button moved into _populate_props_pane
         customtkinter.CTkButton(action_button_frame, text="Apply All to Resource", command=self.apply_all_changes_to_resource).grid(row=0, column=3, padx=5)
 
@@ -472,6 +473,19 @@ class DialogEditorFrame(customtkinter.CTkFrame):
                 self.render_dialog_preview(); self.display_dialog_properties()
                 if self.app_callbacks.get('set_dirty_callback'): self.app_callbacks['set_dirty_callback'](True)
         else: messagebox.showinfo("Delete Control", "No control selected.", parent=self)
+
+    def open_win32_preview(self):
+        try:
+            from .win32_dialog_preview import Win32DialogPreview
+            import threading
+
+            def run_preview():
+                preview = Win32DialogPreview(self.dialog_props_copy, self.controls_copy)
+                preview.show()
+
+            threading.Thread(target=run_preview, daemon=True).start()
+        except Exception as e:
+            messagebox.showerror("Preview Error", f"Failed to open Win32 preview: {e}", parent=self)
 
     def apply_all_changes_to_resource(self):
         # Ensure any pending property changes are applied first from the property grid
